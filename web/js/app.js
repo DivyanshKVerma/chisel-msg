@@ -639,7 +639,7 @@ function infoView() {
       h("p", { class: "body" }, h("b", {}, "Chisel"), " stands for ", h("b", {}, "C"), "ryptographic ", h("b", {}, "H"), "ybrid ", h("b", {}, "I"), "mage-", h("b", {}, "S"), "teganographic ", h("b", {}, "E"), "phemeral ", h("b", {}, "L"), "ayer."),
 
       h("h2", { class: "h-l" }, "Made by"),
-      h("div", { class: "dev-cards" }, dev("Divyansh K Verma", "DivyanshKVerma"), dev("Saatwika Saini", "SaatwikaSaini")),
+      h("div", { class: "dev-cards" }, dev("Divyansh Kumar Verma", "DivyanshKVerma"), dev("Saatwika Saini", "SaatwikaSaini")),
       h("p", { class: "small secondary" }, `Version ${APP_VERSION}`)),
     tabbar("info"));
 }

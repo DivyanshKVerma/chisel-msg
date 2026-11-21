@@ -76,6 +76,7 @@ One app, two ways to get it: the **Android APK** (Capacitor) or the **web app** 
 | ![Info page](docs/images/app_info.png) | ![Settings with theme choice](docs/images/app_settings.png) | ![Chat in dark mode](docs/images/app_dark.png) |
 
 **Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), form fields with 2 px borders, square buttons with a shadow, yellow focus states, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Glassmorphism (backdrop blur and translucency) is used: the floating bottom tab bar, chat header, and message composer. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app.
+
 | Screen | What it does |
 |---|---|
 | **Sign in** | Email → 6-digit code → keys generated on the phone (only signed public keys are uploaded) → new users choose a display name |

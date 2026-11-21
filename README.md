@@ -1,8 +1,12 @@
-# CHISEL
+<img src="web/icons/icon-192.png" alt="Chisel logo" width="96" align="right">
 
-**Cryptographic Hybrid Image-Steganographic Ephemeral Layer** — the secure-transport layer for a messenger that hides end-to-end encrypted text inside AI-generated images.
+# Chisel
 
-CC383 Cryptography & Data Privacy Lab project.
+**Cryptographic Hybrid Image-Steganographic Ephemeral Layer**: a messenger for Android and the web that hides end-to-end encrypted text inside AI-generated pictures.
+
+Made by **Divyansh K Verma** ([@DivyanshKVerma](https://github.com/DivyanshKVerma)) and **Saatwika Saini** ([@SaatwikaSaini](https://github.com/SaatwikaSaini)).
+
+**Version 1.0.0** · Android 7.0+ · Server on Render · [Walkthrough with screenshots](docs/WALKTHROUGH.md)
 
 | Cover image from the pool | Same image carrying an encrypted message |
 |---|---|
@@ -14,10 +18,14 @@ The right-hand image carries a 366-byte signed, encrypted message. The differenc
 
 ## Contents
 
+- [Get the app](#get-the-app)
 - [What it does](#what-it-does)
+- [The app](#the-app)
+- [Android APK](#android-apk)
 - [How a message travels](#how-a-message-travels)
 - [Cryptography](#cryptography)
 - [Steganography (v2: keyed scatter)](#steganography-v2-keyed-scatter)
+- [Cover image buffer](#cover-image-buffer)
 - [Server security](#server-security)
 - [API](#api)
 - [Project layout](#project-layout)
@@ -28,16 +36,108 @@ The right-hand image carries a 366-byte signed, encrypted message. The differenc
 
 ---
 
+## Get the app
+
+| | |
+|---|---|
+| **Android** | Install `Chisel-1.0.0.apk` (a signed release build; see [Android APK](#android-apk) to build it). Allow *Install unknown apps* for your file manager or browser when Android asks. |
+| **Any phone browser** | Open the server URL (`https://chisel-api-1mkl.onrender.com/`) and choose *Add to Home Screen*. |
+| **Needs** | An internet connection and an email address you can read. Nothing else to install: no Google account, Play Store or other apps. |
+
+New to Chisel? The [walkthrough](docs/WALKTHROUGH.md) goes from installing to reading your first hidden message, screen by screen.
+
+---
+
 ## What it does
 
-1. A user signs up with their email and a one-time code (emailed through Brevo).
+1. A user opens Chisel (the Android app, or the same app in a phone browser) and signs up with their email and a one-time code (emailed through Brevo).
 2. Their phone generates keys locally; only **public** keys are uploaded. Private keys never leave the device.
-3. To send a message, the phone fetches the receiver's public key, encrypts and signs the text, and hides the result inside a 512×512 PNG taken from a pool of AI-generated images (Pollinations.ai, model `flux`).
+3. To send a message, the phone fetches the receiver's public key, encrypts and signs the text, and hides the result inside a 512×512 PNG taken from the server's buffer of AI-generated images (generated **on the server** with Pollinations.ai, model `flux`).
 4. The server stores and relays the PNG. It can't read the message, can't find where it is hidden, and deletes it after 24 hours.
 5. The receiver's phone finds the hidden bits with its private key, verifies the sender's signature and decrypts.
 6. Each user's encryption key is replaced daily and the old private key destroyed, so old messages become permanently unreadable (**cryptographic erasure**).
 
 The name maps to the design: **C**ryptographic (AES-256-GCM, X25519, Ed25519) · **H**ybrid (public-key agreement feeding symmetric encryption, plus crypto combined with steganography) · **I**mage-**S**teganographic (bits hidden in pixel values, not metadata) · **E**phemeral (daily key rotation + 24 h expiry) · **L**ayer (a transport layer; the chat UI sits on top).
+
+---
+
+## The app
+
+One app, two ways to get it: the **Android APK** (Capacitor) or the **web app** served by the same server at `/` (open it in any phone browser and *Add to Home Screen*). Both run the same code from [`web/`](web), and all encryption and image work happens on the phone; the server only relays pictures and generates covers.
+
+| Sign in | Chats | Chat | Tap to reveal |
+|---|---|---|---|
+| ![Sign-in screen](docs/images/app_signin.png) | ![Chat list with new-chat button](docs/images/app_chats.png) | ![Chat with picture bubbles and timestamps](docs/images/app_chat.png) | ![Revealed message over a 15pt blur](docs/images/app_reveal.png) |
+
+| Info | Settings | Dark mode |
+|---|---|---|
+| ![Info page](docs/images/app_info.png) | ![Settings with theme choice](docs/images/app_settings.png) | ![Chat in dark mode](docs/images/app_dark.png) |
+
+**Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), form fields with 2 px borders, square buttons with a shadow, yellow focus states, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Glassmorphism (backdrop blur and translucency) is used: the floating bottom tab bar, chat header, and message composer. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app.
+
+| Screen | What it does |
+|---|---|
+| **Sign in** | Email → 6-digit code → keys generated on the phone (only signed public keys are uploaded) → new users choose a display name |
+| **Chats** | Conversations sorted by latest picture, unread counts, search; the **new-chat button** sits bottom-right like WhatsApp |
+| **Chat** | Glass header with the contact's name and email; picture bubbles (received left in grey, sent right in blue) with `[DD-MM-YY \| hh:mm am/pm]` stamps; glass composer to type and send |
+| **Tap a picture** | Everything but the header is blurred to **15 pt** at **70 % opacity**, and the decrypted text appears in a card. Your own sent text comes from this phone's copy |
+| **Info** | Plain-language explanation, glossary, the technology, and the developers' GitHub links |
+| **Settings** | Name, email, safety number; **System / Light / Dark** theme; verified contacts; renew daily key; delete all chats; sign out; remove keys; delete account (confirmed with an email code) |
+
+How it works on the phone:
+
+- [`web/js/chisel.js`](web/js/chisel.js) is a **byte-compatible JavaScript port** of `chisel_core.py`; [`test_interop.py`](test_interop.py) proves Python ↔ JS messages open both ways with identical pixel positions and safety numbers.
+- Crypto comes from the audited [@noble](https://paulmillr.com/noble/) libraries and PNG compression from [fflate](https://github.com/101arrowz/fflate), bundled into [`web/vendor/libs.js`](web/vendor/libs.js); nothing loads from a CDN, so the APK runs from its own files.
+- [`web/js/png.js`](web/js/png.js) reads and writes PNG pixels exactly (never `<canvas>`, which can alter pixels and destroy hidden bits).
+- Sent pictures and their text are kept **on the sender's phone only** (IndexedDB) so both sides of a chat show; they're deleted after 24 h like the server copy.
+- Keys renew daily (cryptographic erasure); a changed safety number blocks sending or reading until the user compares the numbers and trusts the new one.
+- Strict Content-Security-Policy, and all user text is inserted as text, never HTML.
+
+---
+
+## Android APK
+
+The Android app is in [`mobile/`](mobile): Capacitor 8 wrapping [`web/`](web), package **`com.chisel.messenger`**, version **1.0.0**.
+
+| | |
+|---|---|
+| Android versions | 7.0 (API 24) to 16 (API 36) |
+| System WebView | Chrome 67 or newer (updated automatically on almost all phones). If it's older, Chisel shows how to update it instead of failing |
+| Permissions | Internet only |
+| Server | `https://chisel-api-1mkl.onrender.com` over HTTPS; cleartext HTTP is blocked |
+| Signing | Release build, signed with the Chisel release key (APK Signature Scheme v2). Certificate SHA-256: `03:47:E0:09:E1:27:D1:83:26:3E:68:94:07:CE:7A:75:82:F5:63:23:49:87:7C:20:56:DB:20:2A:41:AA:FB:F3` |
+| Hardening | Not debuggable; Android backup disabled (`allowBackup=false`) so private keys never leave the phone in a cloud backup |
+| Tested on | Android 16 emulator (Pixel-class, WebView 133): sign-up, chat with a second client, reveal, back button, themes, launcher icon |
+
+What makes it work on any Android phone:
+
+- Everything the app needs is inside the APK: code, crypto, fonts and icons. The phone only needs internet access to reach the server.
+- The build compiles the app to older JavaScript ([esbuild](https://esbuild.github.io/), Chrome 67 target) and the PNG codec uses bundled zlib instead of newer browser APIs.
+- [`web/js/compat.js`](web/js/compat.js) runs first and, on a WebView too old for the cryptography, explains how to update it.
+- The system-bar areas are Chisel blue on every WebView version (edge-to-edge on new ones, a blue window background on old ones).
+
+### Building the APK
+
+Needs Node.js, JDK 21 and the Android SDK:
+
+```bash
+brew install node openjdk@21
+brew install --cask android-commandlinetools
+export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
+export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"
+sdkmanager --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+cd mobile && npm install
+export CHISEL_KEYSTORE_PROPERTIES=/path/to/keystore.properties   # release key, kept out of git
+npm run apk          # → android/app/build/outputs/apk/release/app-release.apk
+npm run apk:debug    # unsigned-by-you debug build, for development only
+```
+
+`keystore.properties` holds `storeFile`, `storePassword`, `keyAlias` and `keyPassword`. **Keep the keystore and its passwords safe and private:** every future update must be signed with the same key, or phones will refuse to install it over the old version.
+
+- `npm run www` copies `web/` into the app, bundles it and points it at the server (`CHISEL_API_BASE=http://… npm run www` for a test server).
+- `python make-icons.py` regenerates the launcher icons and splash screens from [`web/icons/chisel-logo-source.webp`](web/icons/chisel-logo-source.webp).
+- To rebuild the bundled libraries: `cd web-src && npm install && npm run build`.
 
 ---
 
@@ -51,8 +151,8 @@ sequenceDiagram
     participant P as Pollinations.ai
     participant B as Bob's device
 
-    S->>P: Background job: generate 512×512 covers
-    P-->>S: PNG images → stored in the cover pool
+    S->>P: Server keeps 5 covers ready (refills at 2)
+    P-->>S: PNG images → stored in the cover buffer
     A->>S: GET /api/users/bob/public-keys
     S-->>A: Bob's X25519 key + Ed25519 signature over it
     A->>A: Verify signature, pin Bob's identity key
@@ -123,6 +223,18 @@ The cover must stay **lossless**: the server only accepts genuine 512×512 PNGs 
 
 ---
 
+## Cover image buffer
+
+Images are generated **on the server only** ([`server/pool.py`](server/pool.py)):
+
+- The server keeps a buffer of **5** AI-generated 512×512 covers in the database.
+- Every time a sender takes one, the server checks the buffer; once **2 or fewer** remain it generates enough new images (in the background) to get back to 5.
+- Refills are single-flight: several triggers at once produce one refill.
+- The buffer is also filled at startup and re-checked every 5 minutes as a safety net (e.g. if Pollinations was briefly down). An empty buffer returns 503 "try again" and starts a refill; the app waits and retries automatically.
+- Settings: `POOL_TARGET_SIZE=5`, `POOL_REFILL_THRESHOLD=2`, `POOL_CHECK_INTERVAL_SECONDS=300`.
+
+---
+
 ## Server security
 
 [`server/`](server) is a FastAPI app (async SQLAlchemy; SQLite locally, Postgres/Neon in production).
@@ -134,6 +246,8 @@ The cover must stay **lossless**: the server only accepts genuine 512×512 PNGs 
 | Rate limiting | Per-IP sliding window on sign-up and verify endpoints |
 | Tokens | PyJWT, algorithm pinned (HS256), `exp`/`sub`/`iat` required, `alg=none` rejected |
 | Key directory | Lookups need sign-in; "no such user" and "no keys yet" give the same answer |
+| Key reset | A pinned identity key can be replaced (new phone / cleared browser) only with `reset_identity` **and** a token from an email-code sign-in in the last 10 min; old waiting messages are deleted and contacts see the safety number change |
+| Phone app | Served with a strict CSP (`script-src 'self'`, `frame-ancestors 'none'`); `Cache-Control: no-cache` so updates arrive |
 | Uploads | Must be a valid, uncorrupted 512×512 PNG, max 2 MiB |
 | Cover pool | Covers are **deleted** the moment they're handed out (the server can't diff cover vs stego later), atomically, so no two senders get the same one |
 | Messages | Only the receiver can download; sender or receiver can delete; expired messages purged hourly |
@@ -149,16 +263,20 @@ The cover must stay **lossless**: the server only accepts genuine 512×512 PNGs 
 |---|---|---|---|
 | POST | `/api/register` | – | Email a one-time code |
 | POST | `/api/verify-otp` | – | Verify code → create account → JWT |
-| PUT | `/api/keys` | user | Upload signed public keys (identity key pinned) |
+| PUT | `/api/keys` | user | Upload signed public keys (identity key pinned; `reset_identity` after a fresh sign-in) |
 | GET | `/api/users/{email}/public-keys` | user | Signed keys + fingerprint |
 | GET | `/api/cover-image` | user | Take one cover from the pool |
 | POST | `/api/messages` | user | Send a stego PNG to a receiver |
 | GET | `/api/messages/inbox` | user | List incoming, unexpired messages |
 | GET | `/api/messages/{id}/image` | receiver | Download a stego PNG |
 | DELETE | `/api/messages/{id}` | sender or receiver | Delete a message |
-| GET | `/api/pool-status` | user | Cover pool size |
+| GET | `/api/pool-status` | user | Cover buffer size, target, refill threshold, refilling now |
 | POST | `/api/admin/seed-pool?count=n` | admin | Generate `n` covers now (max 20) |
+| GET / PUT | `/api/me` | user | Your profile; set the display name others see (1–40 characters) |
+| DELETE | `/api/me` | user, fresh sign-in | Delete your account, keys and all your messages |
+| DELETE | `/api/chats?with=email` | user | Clear pictures sent to you by one contact, or by everyone if `with` is omitted |
 | GET | `/api/health` | – | Health check |
+| GET | `/` | – | The phone app |
 
 ---
 
@@ -168,23 +286,36 @@ The cover must stay **lossless**: the server only accepts genuine 512×512 PNGs 
 chisel-msg/
 ├── chisel_core.py        # Device-side crypto + steganography (+ runnable demo)
 ├── image_pool.py         # Standalone Pollinations cover generator (phase-2 demo)
+├── mobile/               # Android app (Capacitor): config, web copy step, icon generator, android/
+├── web/                  # The app (served at /, bundled into the APK): HTML, CSS, JS, fonts, icons
+│   ├── js/chisel.js      # JS port of chisel_core (byte-compatible)
+│   ├── js/png.js         # Exact PNG decode/encode
+│   ├── js/app.js         # Screens and flows (sign in, chats, chat, reveal, info, settings)
+│   ├── js/data.js        # On-phone storage: sent copies, contacts, read state, picture cache
+│   ├── js/compat.js      # Runs first: explains how to update a too-old WebView
+│   └── vendor/libs.js    # Bundled @noble crypto + fflate zlib
+├── web-src/              # npm project that builds vendor/libs.js + JS half of interop test
 ├── server/
 │   ├── main.py           # FastAPI routes
 │   ├── auth.py           # OTP hashing, JWT, rate limiting, admin check
 │   ├── emailer.py        # Brevo HTTPS email delivery
 │   ├── keyutil.py        # Signed-key verification + fingerprints
-│   ├── pool.py           # Cover pool (fetch, store, atomic pop)
+│   ├── pool.py           # Cover buffer (5, refill at 2), fetch, atomic pop
 │   ├── tasks.py          # Background pool refill + expiry cleanup
 │   ├── models.py         # users, otps, messages, cover_images
 │   ├── schemas.py        # Request/response models
 │   ├── config.py         # Settings + production safety checks
 │   └── database.py       # Async engine (Neon-ready)
 ├── test_e2e.py           # Full pipeline through the API
-├── test_audit.py         # 72 timed checks (API, security, crypto, stego)
+├── test_audit.py         # 79 timed checks (API, security, crypto, stego, app, accounts)
 ├── test_email.py         # Email delivery against a fake Brevo
+├── test_pool.py          # Cover buffer: 5 → 2 → refill to 5, single-flight, outages
+├── test_interop.py       # Python ↔ JavaScript compatibility (needs Node.js)
 ├── render.yaml           # Render Blueprint (free web service)
 ├── .env.example          # All settings, with comments
-└── docs/images/          # Images used in this README
+└── docs/
+    ├── WALKTHROUGH.md    # Screen-by-screen guide with Android screenshots
+    └── images/           # Images used in the docs
 ```
 
 ---
@@ -201,6 +332,7 @@ cp .env.example .env        # add your Pollinations key; leave BREVO_API_KEY emp
 ```
 
 - With no Brevo key, sign-in codes are printed in the server log and (with `DEMO_RETURN_OTP=true`) returned by `/api/register`.
+- Phone app: <http://127.0.0.1:8000/> (on a phone on the same Wi-Fi, start uvicorn with `--host 0.0.0.0` and open your computer's LAN address).
 - Swagger UI: <http://127.0.0.1:8000/docs> (hidden in production).
 - Device-side demo, no server needed: `.venv/bin/python chisel_core.py`
 
@@ -219,6 +351,7 @@ cp .env.example .env        # add your Pollinations key; leave BREVO_API_KEY emp
 2. Render → **New → Blueprint** → pick the repo. [`render.yaml`](render.yaml) sets production mode and generates `SECRET_KEY`.
 3. Fill in the prompted values: `DATABASE_URL` (Neon connection string, pasted as-is), `BREVO_API_KEY`, `EMAIL_SENDER_ADDRESS` (a sender verified in Brevo), `ADMIN_EMAILS`, `POLLINATIONS_API_KEY`.
 4. Check `https://<service>.onrender.com/api/health` → `{"status":"ok","service":"CHISEL"}`.
+5. Open `https://<service>.onrender.com/` on a phone and **Add to Home Screen**. Render serves HTTPS, which the app needs for its crypto and service worker.
 
 Never commit `.env` or `.env.production`; both are git-ignored.
 
@@ -228,14 +361,20 @@ Never commit `.env` or `.env.production`; both are git-ignored.
 
 ```bash
 .venv/bin/python test_email.py                  # no server needed
-ADMIN_EMAILS=admin@gbu.ac.in .venv/bin/python -m uvicorn server.main:app --port 8000 &
+.venv/bin/python test_pool.py                   # no server needed
+.venv/bin/python test_interop.py                # needs Node.js (cd web-src && npm install)
+ADMIN_EMAILS=admin@example.com .venv/bin/python -m uvicorn server.main:app --port 8000 &
 .venv/bin/python test_e2e.py
 .venv/bin/python test_audit.py                  # use a fresh chisel.db
 ```
 
 | Suite | Result |
 |---|---|
-| `test_audit.py` (local, SQLite) | **72 / 72** in 7.7 s — health, auth, keys, pool, message pipeline, security boundaries, crypto integrity, steganography, lifecycle, auth hardening |
+| `test_audit.py` (local, SQLite) | **79 / 79** in ~10 s: health, auth, keys, pool, message pipeline, security boundaries, crypto integrity, steganography, lifecycle, auth hardening, key reset, app hosting, display names, clearing chats, account deletion |
+| `test_pool.py` | **11 / 11** — 5 → 4 → 3 → 2 triggers a refill back to 5 (exactly 3 generated), single-flight, empty → 503 → refill, outage survival |
+| `test_interop.py` | **14 / 14** — fingerprints, signed keys, Python→JS and JS→Python messages, identical pixel positions, PNG pixels |
+| App in a mobile-sized browser | Sign-up with display name, new chat, browser → Python and Python → browser messages, auto-refresh, tap-to-reveal blur, light and dark themes |
+| Android 16 emulator | Same flow in the APK: sign-up, new chat, Android → Python and Python → Android messages, reveal, back button, dark mode, launcher icon |
 | `test_e2e.py` | Passes |
 | `test_email.py` | **19 / 19** — code arrives only by email, Brevo failures return 502, production guard |
 | Live two-way test (Render + Neon + Brevo) | **33 / 33** in 31.3 s — fresh sign-up by emailed code, key upload and verification, one message each way, replay/tamper/wrong-receiver checks, cleanup |
@@ -259,8 +398,11 @@ Typical timings: encrypt + sign **~2 ms**, hide in image **~80 ms**, locate + ve
 
 - **Metadata:** the server still knows who messages whom and when (it needs that to deliver).
 - **Trust on first use:** the first identity key seen for a contact is trusted; compare fingerprints in person for real assurance.
-- **Lost device = lost account keys:** the identity key is pinned and there is no key-reset flow yet.
 - **Sender address:** without an owned domain, Brevo rewrites the From address to `…@brevosend.com`; some inboxes may file codes as spam.
 - **Rate limits** are in-memory (fine for one instance; use Redis for several).
 - **Free hosting** sleeps when idle; open `/api/health` a minute before a demo.
-- **Frontend:** the Flutter app is not built yet; tests drive the device-side code directly.
+- **Keys live on one device:** uninstalling the app, clearing its data, or moving to another phone means a key reset (after a fresh email sign-in) and a changed safety number. iOS may clear storage for web apps not added to the Home Screen after long inactivity.
+- **Sent text lives on the sender's phone:** it's needed to show your side of a chat, and is deleted after 24 h, but anyone with access to the unlocked phone could read it until then.
+- **Sideloaded, not on the Play Store:** Android asks to allow *Install unknown apps*, and Play Protect may show a one-time "unknown developer" notice.
+- **No push notifications:** the inbox refreshes when opened and every 15 s while open.
+- Some embedded/in-app browsers block service workers; the app still works there, just without install/offline caching.

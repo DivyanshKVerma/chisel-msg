@@ -125,6 +125,13 @@ async def get_current_user(
     return user
 
 
+def current_token_payload(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """The verified JWT claims of the current request (e.g. for `iat` checks)."""
+    return verify_token(credentials.credentials)
+
+
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     """Only emails listed in ADMIN_EMAILS may use admin routes."""
     if user.email.lower() not in settings.admin_emails:

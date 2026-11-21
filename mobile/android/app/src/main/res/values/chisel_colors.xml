@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Chisel blue: shown behind the status/navigation bars on WebViews older than 140 -->
+    <color name="chisel_blue">#1D70B8</color>
+</resources>

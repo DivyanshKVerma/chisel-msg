@@ -33,5 +33,8 @@ services:
       # Comma-separated emails allowed to call /api/admin/*
       - key: ADMIN_EMAILS
         sync: false
+      # The Android app (Capacitor) runs at https://localhost and calls this API
+      - key: CORS_ORIGINS
+        value: https://localhost
       - key: POLLINATIONS_API_KEY
         sync: false

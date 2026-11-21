@@ -14,7 +14,7 @@ from sqlalchemy import delete, func, select
 from .config import settings
 from .database import async_session
 from .models import OTP, CoverImage, Message
-from .pool import refill_pool
+from .pool import ensure_pool
 
 log = logging.getLogger("chisel.tasks")
 
@@ -48,30 +48,16 @@ async def periodic_cleanup():
 
 
 async def periodic_pool_refill():
-    """Check the cover-image pool and refill from Pollinations if it's low."""
+    """
+    Fill the cover buffer at startup, then re-check every few minutes as a
+    safety net (e.g. if Pollinations was down during an earlier refill).
+    The main trigger is immediate: every cover taken calls trigger_refill().
+    """
     while True:
         try:
-            async with async_session() as db:
-                unused = await db.scalar(
-                    select(func.count())
-                    .select_from(CoverImage)
-                    .where(CoverImage.used == False)
-                )
-                unused = unused or 0
-
-                if unused < settings.POOL_MIN_SIZE:
-                    need = settings.POOL_REFILL_COUNT
-                    log.info(
-                        "[Pool] Only %d unused covers (min=%d). Refilling %d...",
-                        unused, settings.POOL_MIN_SIZE, need,
-                    )
-                    added = await refill_pool(db, need)
-                    log.info("[Pool] Added %d new cover images.", added)
-                else:
-                    log.debug("[Pool] %d unused covers — no refill needed.", unused)
+            await ensure_pool()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.error("[Pool] Refill error: %s", e)
-
-        await asyncio.sleep(settings.POOL_REFILL_INTERVAL_SECONDS)
+        await asyncio.sleep(settings.POOL_CHECK_INTERVAL_SECONDS)

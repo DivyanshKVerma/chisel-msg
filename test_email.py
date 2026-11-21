@@ -71,7 +71,7 @@ async def main():
     api = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
     print("\n── 1. OTP delivered by email only ───────────────────────")
-    r = await api.post("/api/register", json={"email": "dana@gbu.ac.in"})
+    r = await api.post("/api/register", json={"email": "dana@example.com"})
     check("register → 200", r.status_code == 200, r.text)
     check("OTP not exposed in API response", "otp_for_demo" not in r.json(), r.text)
     check("exactly one Brevo call made", len(fake.requests) == 1, str(len(fake.requests)))
@@ -80,28 +80,28 @@ async def main():
     body = json.loads(req.content)
     check("Brevo URL is the transactional endpoint", str(req.url) == emailer.BREVO_SEND_URL)
     check("api-key header sent", req.headers.get("api-key") == "xkeysib-test-not-real")
-    check("addressed to the registering user", body["to"] == [{"email": "dana@gbu.ac.in"}])
+    check("addressed to the registering user", body["to"] == [{"email": "dana@example.com"}])
     check("sender is the configured address", body["sender"]["email"] == "noreply@example.com")
     m = re.search(r"\b(\d{6})\b", body["textContent"])
     code = m.group(1) if m else None
     check("6-digit code present in email body", code is not None)
     check("same code in HTML body and subject", code in body["htmlContent"] and code in body["subject"])
 
-    r = await api.post("/api/verify-otp", json={"email": "dana@gbu.ac.in", "code": code})
+    r = await api.post("/api/verify-otp", json={"email": "dana@example.com", "code": code})
     check("code from the email verifies → JWT", r.status_code == 200 and "token" in r.json(), r.text)
 
     print("\n── 2. Brevo rejects the request ─────────────────────────")
     fake.status = 401
-    r = await api.post("/api/register", json={"email": "erin@gbu.ac.in"})
+    r = await api.post("/api/register", json={"email": "erin@example.com"})
     check("register → 502 when Brevo refuses", r.status_code == 502, f"{r.status_code} {r.text}")
     check("API key not leaked in error", "xkeysib" not in r.text)
     fake.status = 201
-    r = await api.post("/api/register", json={"email": "erin@gbu.ac.in"})
+    r = await api.post("/api/register", json={"email": "erin@example.com"})
     check("immediate retry allowed (no cooldown for failed send)", r.status_code == 200, f"{r.status_code} {r.text}")
 
     print("\n── 3. Brevo unreachable ─────────────────────────────────")
     fake.fail_network = True
-    r = await api.post("/api/register", json={"email": "faye@gbu.ac.in"})
+    r = await api.post("/api/register", json={"email": "faye@example.com"})
     check("register → 502 on network failure", r.status_code == 502, f"{r.status_code} {r.text}")
     fake.fail_network = False
 
@@ -116,11 +116,11 @@ async def main():
     grab = Grab()
     logging.getLogger("chisel.email").addHandler(grab)
     calls_before = len(fake.requests)
-    r = await api.post("/api/register", json={"email": "gus@gbu.ac.in"})
+    r = await api.post("/api/register", json={"email": "gus@example.com"})
     logging.getLogger("chisel.email").removeHandler(grab)
     check("register → 200 without a key", r.status_code == 200, r.text)
     check("no Brevo call made", len(fake.requests) == calls_before)
-    logged = [c for c in captured if "gus@gbu.ac.in" in c and re.search(r"\b\d{6}\b", c)]
+    logged = [c for c in captured if "gus@example.com" in c and re.search(r"\b\d{6}\b", c)]
     check("OTP printed to server log for local testing", bool(logged), str(captured))
 
     print("\n── 5. Production config ─────────────────────────────────")

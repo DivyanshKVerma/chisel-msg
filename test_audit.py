@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519 as ed25519_mod
 from cryptography.hazmat.primitives.asymmetric import x25519 as x25519_mod
 
 BASE = "http://127.0.0.1:8000"
-ADMIN_EMAIL = "admin@gbu.ac.in"   # server must be started with ADMIN_EMAILS=admin@gbu.ac.in
+ADMIN_EMAIL = "admin@example.com"   # server must be started with ADMIN_EMAILS=admin@example.com
 # Same DATABASE_URL the server uses (SQLite locally, Postgres when testing Neon-style)
 DB_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./chisel.db")
 
@@ -131,7 +131,7 @@ def main():
     alice_otp = None
     def b1():
         nonlocal alice_otp
-        r = client.post("/api/register", json={"email": "alice@gbu.ac.in"})
+        r = client.post("/api/register", json={"email": "alice@example.com"})
         assert r.status_code == 200
         alice_otp = r.json()["otp_for_demo"]
         assert len(alice_otp) == 6 and alice_otp.isdigit()
@@ -141,7 +141,7 @@ def main():
     bob_otp = None
     def b2():
         nonlocal bob_otp
-        r = client.post("/api/register", json={"email": "bob@gbu.ac.in"})
+        r = client.post("/api/register", json={"email": "bob@example.com"})
         assert r.status_code == 200
         bob_otp = r.json()["otp_for_demo"]
     timed("POST /api/register — second user", b2)
@@ -154,7 +154,7 @@ def main():
 
     # B4: Verify with wrong OTP
     def b4():
-        r = client.post("/api/verify-otp", json={"email": "alice@gbu.ac.in", "code": "000000"})
+        r = client.post("/api/verify-otp", json={"email": "alice@example.com", "code": "000000"})
         return r
     expect_fail("POST /api/verify-otp — wrong OTP rejected", b4, expected_status=400)
 
@@ -163,7 +163,7 @@ def main():
     alice_uid = None
     def b5():
         nonlocal alice_token, alice_uid
-        r = client.post("/api/verify-otp", json={"email": "alice@gbu.ac.in", "code": alice_otp})
+        r = client.post("/api/verify-otp", json={"email": "alice@example.com", "code": alice_otp})
         assert r.status_code == 200
         d = r.json()
         alice_token = d["token"]
@@ -173,7 +173,7 @@ def main():
 
     # B6: Reuse same OTP (should fail)
     def b6():
-        r = client.post("/api/verify-otp", json={"email": "alice@gbu.ac.in", "code": alice_otp})
+        r = client.post("/api/verify-otp", json={"email": "alice@example.com", "code": alice_otp})
         return r
     expect_fail("POST /api/verify-otp — OTP reuse rejected", b6, expected_status=400)
 
@@ -182,7 +182,7 @@ def main():
     bob_uid = None
     def b7():
         nonlocal bob_token, bob_uid
-        r = client.post("/api/verify-otp", json={"email": "bob@gbu.ac.in", "code": bob_otp})
+        r = client.post("/api/verify-otp", json={"email": "bob@example.com", "code": bob_otp})
         assert r.status_code == 200
         d = r.json()
         bob_token = d["token"]
@@ -210,8 +210,8 @@ def main():
     print("\n── C. KEY MANAGEMENT ────────────────────────────────────")
 
     # Generate device keys
-    alice_keys = chisel_core.UserKeys("alice@gbu.ac.in")
-    bob_keys = chisel_core.UserKeys("bob@gbu.ac.in")
+    alice_keys = chisel_core.UserKeys("alice@example.com")
+    bob_keys = chisel_core.UserKeys("bob@example.com")
 
     def _pub_hex(key_obj, is_ed=False):
         return key_obj.public_bytes(
@@ -259,20 +259,20 @@ def main():
 
     # C4c: Signature by a different identity key
     def c4c():
-        mallory = chisel_core.UserKeys("mallory@gbu.ac.in")
+        mallory = chisel_core.UserKeys("mallory@example.com")
         forged = bob_keys.key_upload_payload() | {"x25519_sig_hex": mallory.signed_prekey().hex()}
         return client.put("/api/keys", json=forged, headers=bob_h)
     expect_fail("PUT /api/keys — X25519 signed by wrong identity → 400", c4c, expected_status=400)
 
     # C4d: Identity key swap after pinning
     def c4d():
-        impostor = chisel_core.UserKeys("bob@gbu.ac.in")
+        impostor = chisel_core.UserKeys("bob@example.com")
         return client.put("/api/keys", json=impostor.key_upload_payload(), headers=bob_h)
     expect_fail("PUT /api/keys — identity key replacement refused → 409", c4d, expected_status=409)
 
     # C5: Fetch Bob's public keys (authenticated) + client-side verification
     def c5():
-        r = client.get("/api/users/bob@gbu.ac.in/public-keys", headers=alice_h)
+        r = client.get("/api/users/bob@example.com/public-keys", headers=alice_h)
         assert r.status_code == 200
         d = r.json()
         assert d["x25519_pub_hex"] == bob_x_hex
@@ -283,24 +283,24 @@ def main():
 
     # C5b: Lookup without auth
     def c5b():
-        return client.get("/api/users/bob@gbu.ac.in/public-keys")
+        return client.get("/api/users/bob@example.com/public-keys")
     expect_fail("GET public-keys — unauthenticated lookup → 401/403", c5b, expected_status=(401, 403))
 
     # C5c: Uppercase email resolves to the same user
     def c5c():
-        r = client.get("/api/users/BOB@GBU.AC.IN/public-keys", headers=alice_h)
+        r = client.get("/api/users/BOB@EXAMPLE.COM/public-keys", headers=alice_h)
         assert r.status_code == 200 and r.json()["ed25519_pub_hex"] == bob_e_hex
     timed("GET public-keys — email lookup is case-insensitive", c5c)
 
     # C6: Fetch non-existent user's keys
     def c6():
-        return client.get("/api/users/nobody@gbu.ac.in/public-keys", headers=alice_h)
+        return client.get("/api/users/nobody@example.com/public-keys", headers=alice_h)
     expect_fail("GET public-keys — unknown user → 404", c6, expected_status=404)
 
     # C6b: Client detects a tampered directory entry
     def c6b():
-        d = client.get("/api/users/bob@gbu.ac.in/public-keys", headers=alice_h).json()
-        evil = chisel_core.UserKeys("eve@gbu.ac.in")
+        d = client.get("/api/users/bob@example.com/public-keys", headers=alice_h).json()
+        evil = chisel_core.UserKeys("eve@example.com")
         d["x25519_pub_hex"] = evil.x25519_pub_bytes().hex()   # server swaps X25519 only
         try:
             chisel_core.load_verified_contact(d, chisel_core.KeyPinStore())
@@ -311,8 +311,8 @@ def main():
 
     # C6c: Client detects an identity-key swap via TOFU pin
     def c6c():
-        d = client.get("/api/users/bob@gbu.ac.in/public-keys", headers=alice_h).json()
-        evil = chisel_core.UserKeys("bob@gbu.ac.in")
+        d = client.get("/api/users/bob@example.com/public-keys", headers=alice_h).json()
+        evil = chisel_core.UserKeys("bob@example.com")
         d.update(evil.key_upload_payload())                  # whole identity replaced
         try:
             chisel_core.load_verified_contact(d, alice_pins)  # Alice pinned Bob in C5
@@ -327,7 +327,7 @@ def main():
         new_x = alice_keys.x25519_pub_bytes().hex()
         r = client.put("/api/keys", json=alice_keys.key_upload_payload(), headers=alice_h)
         assert r.status_code == 200, r.text
-        d = client.get("/api/users/alice@gbu.ac.in/public-keys", headers=bob_h).json()
+        d = client.get("/api/users/alice@example.com/public-keys", headers=bob_h).json()
         assert d["x25519_pub_hex"] == new_x, "Key rotation did not update"
         chisel_core.load_verified_contact(d, bob_pins)
     timed("PUT /api/keys — daily X25519 rotation under pinned identity", c7)
@@ -397,7 +397,7 @@ def main():
     bob_enc_pub_from_server = None
     def e1():
         nonlocal bob_enc_pub_from_server
-        d = client.get("/api/users/bob@gbu.ac.in/public-keys", headers=alice_h).json()
+        d = client.get("/api/users/bob@example.com/public-keys", headers=alice_h).json()
         bob_enc_pub_from_server, _ = chisel_core.load_verified_contact(d, alice_pins)
     timed("Fetch + verify receiver's signed X25519 key", e1)
 
@@ -438,7 +438,7 @@ def main():
         with open(stego_path, "rb") as f:
             r = client.post(
                 "/api/messages",
-                data={"receiver_email": "bob@gbu.ac.in"},
+                data={"receiver_email": "bob@example.com"},
                 files={"stego_image": ("stego.png", f, "image/png")},
                 headers=alice_h,
             )
@@ -452,7 +452,7 @@ def main():
         assert r.status_code == 200
         msgs = r.json()["messages"]
         assert len(msgs) >= 1
-        assert msgs[0]["sender_email"] == "alice@gbu.ac.in"
+        assert msgs[0]["sender_email"] == "alice@example.com"
     timed("GET /api/messages/inbox — Bob sees Alice's message", e6)
 
     # E7: Alice's inbox should NOT have this message
@@ -496,14 +496,14 @@ def main():
     bob_seen = set()   # Bob's device remembers opened msg_ids (replay protection)
     def e11():
         nonlocal decrypted
-        d = client.get("/api/users/alice@gbu.ac.in/public-keys", headers=bob_h).json()
+        d = client.get("/api/users/alice@example.com/public-keys", headers=bob_h).json()
         _, alice_sign_pub = chisel_core.load_verified_contact(d, bob_pins)
         decrypted, meta = chisel_core.open_from_image(
             dl_path, bob_keys, alice_sign_pub, seen_msg_ids=bob_seen
         )
         assert decrypted == secret_msg
-        assert meta["sender"] == "alice@gbu.ac.in"
-        assert meta["receiver"] == "bob@gbu.ac.in"
+        assert meta["sender"] == "alice@example.com"
+        assert meta["receiver"] == "bob@example.com"
     timed("On-device: Ed25519 verify + AES-256-GCM decrypt → plaintext", e11)
 
     print(f"\n              DECRYPTED: \"{decrypted}\"")
@@ -530,7 +530,7 @@ def main():
         with open(stego_path, "rb") as f:
             r = client.post(
                 "/api/messages",
-                data={"receiver_email": "alice@gbu.ac.in"},
+                data={"receiver_email": "alice@example.com"},
                 files={"stego_image": ("s.png", f, "image/png")},
                 headers=alice_h,
             )
@@ -542,7 +542,7 @@ def main():
         with open(stego_path, "rb") as f:
             r = client.post(
                 "/api/messages",
-                data={"receiver_email": "nobody@gbu.ac.in"},
+                data={"receiver_email": "nobody@example.com"},
                 files={"stego_image": ("s.png", f, "image/png")},
                 headers=alice_h,
             )
@@ -552,7 +552,7 @@ def main():
     def _send(raw: bytes, name="x.png"):
         return client.post(
             "/api/messages",
-            data={"receiver_email": "bob@gbu.ac.in"},
+            data={"receiver_email": "bob@example.com"},
             files={"stego_image": (name, raw, "image/png")},
             headers=alice_h,
         )
@@ -615,7 +615,7 @@ def main():
 
     # G2: Wrong receiver cannot decrypt
     def g2():
-        eve_keys = chisel_core.UserKeys("eve@gbu.ac.in")
+        eve_keys = chisel_core.UserKeys("eve@example.com")
         alice_sign_pub = alice_keys.sign_pub   # already verified + pinned in E11
         try:
             chisel_core.open_from_image(dl_path, eve_keys, alice_sign_pub)
@@ -639,12 +639,12 @@ def main():
     # G4: AAD prevents receiver mismatch
     def g4():
         # Create a fresh bundle for alice→bob, but try decrypting as a different "receiver"
-        fresh_bob = chisel_core.UserKeys("bob@gbu.ac.in")
+        fresh_bob = chisel_core.UserKeys("bob@example.com")
         fresh_bundle = chisel_core.encrypt_and_sign(
-            "test", alice_keys, "bob@gbu.ac.in", fresh_bob.enc_pub
+            "test", alice_keys, "bob@example.com", fresh_bob.enc_pub
         )
         # Modify bob's user_id so AAD check fails
-        fake_bob = chisel_core.UserKeys("mallory@gbu.ac.in")
+        fake_bob = chisel_core.UserKeys("mallory@example.com")
         fake_bob.enc_priv = fresh_bob.enc_priv  # give Mallory Bob's key (hypothetically)
         fake_bob.enc_pub = fresh_bob.enc_pub
         try:
@@ -656,7 +656,7 @@ def main():
 
     # G5: Replay detection
     def g5():
-        carol = chisel_core.UserKeys("carol@gbu.ac.in")
+        carol = chisel_core.UserKeys("carol@example.com")
         b = chisel_core.encrypt_and_sign("once only", alice_keys, carol.user_id, carol.enc_pub)
         seen = set()
         chisel_core.verify_and_decrypt(b, carol, alice_keys.sign_pub, seen_msg_ids=seen)
@@ -680,7 +680,7 @@ def main():
         rows = {i // (512 * 3) for i in idx}
         return idx, deltas, rows
 
-    sx, sy = chisel_core.UserKeys("sx@gbu.ac.in"), chisel_core.UserKeys("sy@gbu.ac.in")
+    sx, sy = chisel_core.UserKeys("sx@example.com"), chisel_core.UserKeys("sy@example.com")
     v1_path, v2_path = "_audit_v1.png", "_audit_v2.png"
     demo = "Steganography check: where do the bits go?"
     chisel_core.embed_lsb(cover_path, chisel_core.encrypt_and_sign(demo, sx, sy.user_id, sy.enc_pub), v1_path)
@@ -752,12 +752,12 @@ def main():
         r = client.put("/api/keys", json=bob_keys.key_upload_payload(), headers=bob_h)
         assert r.status_code == 200, r.text
         new_bob_enc_pub = bob_keys.enc_pub
-        chisel_core.seal_into_image("delete me", alice_keys, "bob@gbu.ac.in", new_bob_enc_pub,
+        chisel_core.seal_into_image("delete me", alice_keys, "bob@example.com", new_bob_enc_pub,
                                     cover_path, "_audit_del.png")
         with open("_audit_del.png", "rb") as f:
             r = client.post(
                 "/api/messages",
-                data={"receiver_email": "bob@gbu.ac.in"},
+                data={"receiver_email": "bob@example.com"},
                 files={"stego_image": ("d.png", f, "image/png")},
                 headers=alice_h,
             )
@@ -805,25 +805,25 @@ def main():
     carol_otp = None
     def i1():
         nonlocal carol_otp
-        r = client.post("/api/register", json={"email": "carol@gbu.ac.in"})
+        r = client.post("/api/register", json={"email": "carol@example.com"})
         assert r.status_code == 200
         carol_otp = r.json()["otp_for_demo"]
-        rows = db_query("SELECT code_hash FROM otps WHERE email = ?", ("carol@gbu.ac.in",))
+        rows = db_query("SELECT code_hash FROM otps WHERE email = ?", ("carol@example.com",))
         assert rows and all(len(h) == 64 and carol_otp not in h for (h,) in rows)
     timed("OTP stored only as HMAC-SHA256 hash (no plaintext in DB)", i1)
 
     expect_fail("POST /api/register — resend within cooldown → 429",
-                lambda: client.post("/api/register", json={"email": "carol@gbu.ac.in"}),
+                lambda: client.post("/api/register", json={"email": "carol@example.com"}),
                 expected_status=429)
 
     def i3():
         wrong = "000000" if carol_otp != "000000" else "111111"
         codes = []
         for _ in range(5):
-            codes.append(client.post("/api/verify-otp", json={"email": "carol@gbu.ac.in", "code": wrong}).status_code)
+            codes.append(client.post("/api/verify-otp", json={"email": "carol@example.com", "code": wrong}).status_code)
         assert codes[:4] == [400] * 4 and codes[4] == 429, codes
         # The real code is now burned too
-        r = client.post("/api/verify-otp", json={"email": "carol@gbu.ac.in", "code": carol_otp})
+        r = client.post("/api/verify-otp", json={"email": "carol@example.com", "code": carol_otp})
         assert r.status_code == 400, r.status_code
     timed("OTP brute force: 5 wrong guesses burn the code (even correct one fails)", i3)
 
@@ -850,11 +850,109 @@ def main():
         assert r.headers.get("cache-control") == "no-store"
     timed("Security headers present (nosniff, no-store)", i6)
 
+    # ── Identity reset (new phone / cleared browser) ────────
+    dave_h, dave_keys = None, None
+    def i8():
+        nonlocal dave_h, dave_keys
+        otp = client.post("/api/register", json={"email": "dave@example.com"}).json()["otp_for_demo"]
+        tok = client.post("/api/verify-otp", json={"email": "dave@example.com", "code": otp}).json()["token"]
+        dave_h = {"Authorization": f"Bearer {tok}"}
+        dave_keys = chisel_core.UserKeys("dave@example.com")
+        assert client.put("/api/keys", json=dave_keys.key_upload_payload(), headers=dave_h).status_code == 200
+        new_phone = chisel_core.UserKeys("dave@example.com")
+        r = client.put("/api/keys", json=new_phone.key_upload_payload(), headers=dave_h)
+        assert r.status_code == 409, r.status_code
+        r = client.put("/api/keys", json=new_phone.key_upload_payload() | {"reset_identity": True}, headers=dave_h)
+        assert r.status_code == 200 and r.json()["identity_reset"] is True, r.text
+        d = client.get("/api/users/dave@example.com/public-keys", headers=alice_h).json()
+        assert d["ed25519_pub_hex"] == new_phone.ed25519_pub_bytes().hex()
+        dave_keys = new_phone
+    timed("Identity reset works only with reset_identity + fresh sign-in", i8)
+
+    def i9():
+        import jwt as pyjwt
+        from datetime import datetime, timedelta, timezone
+        from server.config import settings as srv
+        old = datetime.now(timezone.utc) - timedelta(minutes=30)
+        claims = pyjwt.decode(dave_h["Authorization"].split()[1], options={"verify_signature": False})
+        stale = pyjwt.encode(claims | {"iat": old, "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+                             srv.SECRET_KEY, algorithm=srv.JWT_ALGORITHM)
+        third = chisel_core.UserKeys("dave@example.com")
+        return client.put("/api/keys", json=third.key_upload_payload() | {"reset_identity": True},
+                          headers={"Authorization": f"Bearer {stale}"})
+    expect_fail("Identity reset with a 30-min-old token → 403 (stolen token can't swap keys)", i9, expected_status=403)
+
+    def i10():
+        r = client.get("/")
+        assert r.status_code == 200 and "<title>Chisel</title>" in r.text, r.status_code
+        csp = r.headers.get("content-security-policy", "")
+        assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp, csp
+        for path in ("/js/chisel.js", "/js/app.js", "/js/ui.js", "/js/data.js", "/vendor/libs.js", "/js/compat.js", "/manifest.webmanifest",
+                     "/sw.js", "/icons/icon-192.png", "/fonts/arimo-latin-400-normal.woff2", "/favicon.ico"):
+            assert client.get(path).status_code == 200, path
+        assert client.get("/api/does-not-exist").status_code == 404
+    timed("Phone app served from / with a strict CSP; API routes unaffected", i10)
+
+    # ── Display names ───────────────────────────────────────
+    def i11():
+        r = client.put("/api/me", json={"display_name": "  Alice   Sharma "}, headers=alice_h)
+        assert r.status_code == 200 and r.json()["display_name"] == "Alice Sharma", r.text
+        assert client.get("/api/me", headers=alice_h).json()["display_name"] == "Alice Sharma"
+        d = client.get("/api/users/alice@example.com/public-keys", headers=bob_h).json()
+        assert d["display_name"] == "Alice Sharma", d
+    timed("Display name: set (whitespace tidied), read back, shown to contacts", i11)
+
+    def i12():
+        bad = ["", "   ", "x" * 41, "Bad\x00name", "Bell\x07name"]
+        codes = [client.put("/api/me", json={"display_name": b}, headers=alice_h).status_code for b in bad]
+        assert codes == [422] * len(bad), codes
+        # Tabs/newlines are whitespace: tidied into single spaces, not rejected
+        r = client.put("/api/me", json={"display_name": "Tab\tand\nnewline"}, headers=alice_h)
+        assert r.status_code == 200 and r.json()["display_name"] == "Tab and newline", r.text
+        assert client.put("/api/me", json={"display_name": "Alice Sharma"}, headers=alice_h).status_code == 200
+    timed("Display name: empty, too long or control characters → 422", i12)
+
+    # ── Clearing chats ──────────────────────────────────────
+    def i13():
+        def send_one():
+            d = client.get("/api/users/bob@example.com/public-keys", headers=alice_h).json()
+            x, _ = chisel_core.load_verified_contact(d, chisel_core.KeyPinStore())
+            chisel_core.seal_into_image("clear me", alice_keys, "bob@example.com", x, cover_path, "_audit_clear.png")
+            with open("_audit_clear.png", "rb") as f:
+                assert client.post("/api/messages", data={"receiver_email": "bob@example.com"},
+                                   files={"stego_image": ("c.png", f, "image/png")}, headers=alice_h).status_code == 201
+        send_one(); send_one()
+        inbox = client.get("/api/messages/inbox", headers=bob_h).json()["messages"]
+        assert inbox and inbox[0]["sender_display_name"] == "Alice Sharma", inbox[:1]
+        r = client.delete("/api/chats?with=alice@example.com", headers=bob_h)
+        assert r.status_code == 200 and r.json()["deleted"] >= 2, r.text
+        assert not [m for m in client.get("/api/messages/inbox", headers=bob_h).json()["messages"] if m["sender_email"] == "alice@example.com"]
+        assert client.delete("/api/chats", headers=bob_h).json()["deleted"] >= 0
+        os.remove("_audit_clear.png")
+    timed("Clear chat with one contact, then all chats (receiver's copies only)", i13)
+
+    # ── Deleting an account ─────────────────────────────────
+    def i14():
+        import jwt as pyjwt
+        from datetime import datetime, timedelta, timezone
+        from server.config import settings as srv
+        claims = pyjwt.decode(dave_h["Authorization"].split()[1], options={"verify_signature": False})
+        stale = pyjwt.encode(claims | {"iat": datetime.now(timezone.utc) - timedelta(minutes=30),
+                                       "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+                             srv.SECRET_KEY, algorithm=srv.JWT_ALGORITHM)
+        r = client.delete("/api/me", headers={"Authorization": f"Bearer {stale}"})
+        assert r.status_code == 403, r.status_code
+        r = client.delete("/api/me", headers=dave_h)            # fresh sign-in from i8
+        assert r.status_code == 200, r.text
+        assert client.get("/api/me", headers=dave_h).status_code == 401
+        assert client.get("/api/users/dave@example.com/public-keys", headers=alice_h).status_code == 404
+    timed("Delete account: refused with old token (403), works after fresh sign-in", i14)
+
     # Must be last: exhausts this IP's auth budget for a minute
     def i7():
         statuses = []
         for n in range(60):
-            sc = client.post("/api/register", json={"email": f"spam{n}@gbu.ac.in"}).status_code
+            sc = client.post("/api/register", json={"email": f"spam{n}@example.com"}).status_code
             statuses.append(sc)
             if sc == 429:
                 return

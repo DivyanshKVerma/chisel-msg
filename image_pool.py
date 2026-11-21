@@ -104,8 +104,8 @@ if __name__ == "__main__":
     test_cover = files[0]
     test_stego = "ai_stego_test.png"
 
-    alice = chisel_core.UserKeys("alice@gbu.ac.in")
-    bob = chisel_core.UserKeys("bob@gbu.ac.in")
+    alice = chisel_core.UserKeys("alice@example.com")
+    bob = chisel_core.UserKeys("bob@example.com")
     msg = "Phase 2 integration check: real AI cover image carrying AES-256-GCM + Ed25519 payload."
 
     stats = chisel_core.seal_into_image(msg, alice, bob.user_id, bob.enc_pub, test_cover, test_stego)

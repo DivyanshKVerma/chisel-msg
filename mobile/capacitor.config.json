@@ -1,0 +1,17 @@
+{
+  "appId": "com.chisel.messenger",
+  "appName": "Chisel",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "initialViewportFitValueHint": "cover",
+      "style": "DARK"
+    }
+  }
+}

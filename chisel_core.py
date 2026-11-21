@@ -531,9 +531,9 @@ if __name__ == "__main__":
         print(f"[+] Created fallback 512x512 cover image: {cover_file}")
 
     # Step A: Sign-up / Daily Key Generation
-    alice = UserKeys("alice@gbu.ac.in")
-    bob = UserKeys("bob@gbu.ac.in")
-    eve = UserKeys("eve@gbu.ac.in")
+    alice = UserKeys("alice@example.com")
+    bob = UserKeys("bob@example.com")
+    eve = UserKeys("eve@example.com")
     secret_message = "Meet at the library at 5 PM. Project viva slides are finalized."
 
     # Step B: Encrypt, sign and hide at keyed, scattered positions

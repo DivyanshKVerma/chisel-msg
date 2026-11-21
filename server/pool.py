@@ -3,6 +3,7 @@ CHISEL Cover-Image Pool Manager
 Fetches AI-generated 512×512 PNGs from Pollinations.ai and stores them in Postgres.
 """
 
+import asyncio
 import io
 import logging
 import random
@@ -14,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
+from .database import async_session
 from .models import CoverImage
 
 log = logging.getLogger("chisel.pool")
@@ -143,3 +145,43 @@ async def pop_cover(db: AsyncSession) -> bytes | None:
         if data is not None:
             return data
     return None
+
+
+# ── Buffer management ─────────────────────────────────────
+# One refill at a time (single-flight); extra triggers while one runs are ignored.
+_refill_lock = asyncio.Lock()
+_background: set[asyncio.Task] = set()
+
+
+def refill_in_progress() -> bool:
+    return _refill_lock.locked()
+
+
+async def ensure_pool() -> int:
+    """
+    If the buffer has POOL_REFILL_THRESHOLD or fewer covers left, generate
+    enough new ones (on this server, via Pollinations) to get back to
+    POOL_TARGET_SIZE. Returns how many were added.
+    """
+    if _refill_lock.locked():
+        return 0
+    async with _refill_lock:
+        async with async_session() as db:
+            unused = await get_unused_count(db)
+            if unused > settings.POOL_REFILL_THRESHOLD:
+                return 0
+            need = settings.POOL_TARGET_SIZE - unused
+            log.info(
+                "[Pool] %d cover(s) left (refill at <= %d) - generating %d to refill to %d",
+                unused, settings.POOL_REFILL_THRESHOLD, need, settings.POOL_TARGET_SIZE,
+            )
+            added = await refill_pool(db, need)
+            log.info("[Pool] Refill done: +%d, buffer now %d", added, unused + added)
+            return added
+
+
+def trigger_refill() -> None:
+    """Fire-and-forget refill check (called right after a cover is taken)."""
+    task = asyncio.create_task(ensure_pool(), name="pool-refill-trigger")
+    _background.add(task)          # keep a reference so it isn't garbage-collected
+    task.add_done_callback(_background.discard)

@@ -1,0 +1,19 @@
+{
+  "name": "chisel-web-build",
+  "private": true,
+  "type": "module",
+  "description": "Builds web/vendor/libs.js (audited crypto + fflate) and runs Python<->JS interop tests",
+  "scripts": {
+    "build": "esbuild vendor-entry.js --bundle --format=esm --minify --legal-comments=inline --target=es2019 --outfile=../web/vendor/libs.js"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@fontsource/arimo": "5.3.0",
+    "esbuild": "0.28.2"
+  }
+}

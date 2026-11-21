@@ -1,0 +1,21 @@
+{
+  "name": "chisel-android",
+  "private": true,
+  "type": "module",
+  "description": "Packages the Chisel web app (../web) as an Android APK with Capacitor",
+  "scripts": {
+    "www": "node build-www.mjs",
+    "sync": "npm run www && cap sync android",
+    "apk": "npm run sync && cd android && ./gradlew assembleRelease",
+    "apk:debug": "npm run sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "esbuild": "0.28.2"
+  }
+}

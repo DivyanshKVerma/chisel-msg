@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # --- Rate limiting (per client IP, in-memory) ---
     AUTH_RATE_LIMIT_PER_MINUTE: int = 20
 
+    # --- Identity reset ---
+    # Replacing a pinned identity key (lost phone / cleared browser) needs a
+    # token from an email-code sign-in no older than this.
+    IDENTITY_RESET_MAX_TOKEN_AGE_SECONDS: int = 600
+
     # --- Admin ---
     # Comma-separated list of emails allowed to call /api/admin/*
     ADMIN_EMAILS: str = ""
@@ -56,9 +61,11 @@ class Settings(BaseSettings):
 
     # --- Cover Image Pool ---
     POLLINATIONS_API_KEY: str = ""
-    POOL_MIN_SIZE: int = 10                 # Refill when unused count drops below this
-    POOL_REFILL_COUNT: int = 5              # How many to generate per refill cycle
-    POOL_REFILL_INTERVAL_SECONDS: int = 1800  # 30 minutes
+    # Keep a buffer of POOL_TARGET_SIZE covers. As soon as a sender takes one and
+    # only POOL_REFILL_THRESHOLD remain, the server generates enough to refill.
+    POOL_TARGET_SIZE: int = 5
+    POOL_REFILL_THRESHOLD: int = 2
+    POOL_CHECK_INTERVAL_SECONDS: int = 300  # safety net: re-check every 5 min
     ADMIN_SEED_MAX: int = 20                # Max images per manual seed call
 
     # --- Message TTL ---

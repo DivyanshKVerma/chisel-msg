@@ -38,14 +38,17 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 from pydantic import EmailStr, TypeAdapter, ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .auth import (
     create_token,
+    current_token_payload,
     generate_otp,
     get_current_user,
     hash_otp,
@@ -58,10 +61,19 @@ from .database import get_db, init_db
 from .emailer import EmailDeliveryError, send_otp_email
 from .keyutil import fingerprint, verify_prekey_signature
 from .models import CoverImage, Message, OTP, User
-from .pool import get_total_count, get_unused_count, pop_cover, refill_pool
+from .pool import (
+    get_total_count,
+    get_unused_count,
+    pop_cover,
+    refill_in_progress,
+    refill_pool,
+    trigger_refill,
+)
 from .schemas import (
     HealthResponse,
     InboxResponse,
+    MeResponse,
+    ProfileUpdate,
     MessageMeta,
     PoolStatusResponse,
     PublicKeysResponse,
@@ -77,6 +89,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-18s  %(mess
 log = logging.getLogger("chisel.api")
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+APP_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; "
+    "connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; "
+    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+)
 _email_adapter = TypeAdapter(EmailStr)
 
 
@@ -149,6 +167,10 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "no-referrer"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        # The phone app: only our own scripts/styles; images may be blob:/data:
+        response.headers["Content-Security-Policy"] = APP_CSP
+        response.headers["Cache-Control"] = "no-cache"  # always revalidate the app
     return response
 
 
@@ -271,7 +293,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
 
     token = create_token(user.id, user.email)
     log.info("[Auth] User verified: %s (id=%s)", user.email, user.id)
-    return VerifyOTPResponse(token=token, user_id=user.id, email=user.email)
+    return VerifyOTPResponse(token=token, user_id=user.id, email=user.email, display_name=user.display_name)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -282,6 +304,7 @@ async def verify_otp(req: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
 async def upload_keys(
     req: UploadKeysRequest,
     user: User = Depends(get_current_user),
+    token: dict = Depends(current_token_payload),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -291,6 +314,10 @@ async def upload_keys(
       can check that the encryption key really belongs to that identity.
     - The Ed25519 identity key is pinned on first upload. Daily rotation only
       replaces the X25519 key; an attempt to change the identity key is refused.
+    - Exception: `reset_identity=true` with a token from an email-code sign-in
+      in the last IDENTITY_RESET_MAX_TOKEN_AGE_SECONDS (lost phone, cleared
+      browser). Messages waiting for the old keys are deleted (they could never
+      be opened), and contacts' devices will flag the changed fingerprint.
     """
     try:
         x25519_bytes = bytes.fromhex(req.x25519_pub_hex)
@@ -304,17 +331,28 @@ async def upload_keys(
     if len(sig_bytes) != 64:
         raise HTTPException(status_code=400, detail="Signature must be exactly 64 bytes")
 
-    if user.ed25519_pub and user.ed25519_pub != ed25519_bytes:
-        raise HTTPException(
-            status_code=409,
-            detail="Identity key is pinned and cannot be replaced. Only the X25519 key rotates.",
-        )
-
     if not verify_prekey_signature(ed25519_bytes, x25519_bytes, sig_bytes):
         raise HTTPException(
             status_code=400,
             detail="X25519 key signature does not verify under the Ed25519 identity key",
         )
+
+    identity_reset = False
+    if user.ed25519_pub and user.ed25519_pub != ed25519_bytes:
+        if not req.reset_identity:
+            raise HTTPException(
+                status_code=409,
+                detail="Identity key is pinned and cannot be replaced. Only the X25519 key rotates.",
+            )
+        token_age = datetime.now(timezone.utc).timestamp() - float(token.get("iat", 0))
+        if token_age > settings.IDENTITY_RESET_MAX_TOKEN_AGE_SECONDS:
+            raise HTTPException(
+                status_code=403,
+                detail="Sign in again with an email code to reset your keys.",
+            )
+        await db.execute(delete(Message).where(Message.receiver_id == user.id))
+        identity_reset = True
+        log.warning("[Keys] Identity key RESET for %s (fresh sign-in %.0fs ago)", user.email, token_age)
 
     user.x25519_pub = x25519_bytes
     user.x25519_sig = sig_bytes
@@ -326,6 +364,7 @@ async def upload_keys(
     return {
         "message": "Public keys uploaded successfully",
         "fingerprint": fingerprint(ed25519_bytes),
+        "identity_reset": identity_reset,
     }
 
 
@@ -355,6 +394,7 @@ async def get_public_keys(
         x25519_sig_hex=user.x25519_sig.hex(),
         ed25519_pub_hex=user.ed25519_pub.hex(),
         fingerprint=fingerprint(user.ed25519_pub),
+        display_name=user.display_name,
     )
 
 
@@ -373,6 +413,8 @@ async def get_cover_image(
     its copy, so it cannot later diff the cover against the stego image.
     """
     image_data = await pop_cover(db)
+    # Top the buffer back up in the background if this left it low (or empty)
+    trigger_refill()
     if not image_data:
         raise HTTPException(
             status_code=503,
@@ -457,6 +499,7 @@ async def inbox(
             MessageMeta(
                 id=msg.id,
                 sender_email=msg.sender.email,
+                sender_display_name=msg.sender.display_name,
                 created_at=msg.created_at,
                 expires_at=msg.expires_at,
             )
@@ -512,6 +555,72 @@ async def delete_message(
     return {"message": "Deleted"}
 
 
+@app.delete("/api/chats", tags=["Messages"])
+async def delete_chats(
+    with_email: str | None = Query(None, alias="with", description="Only this contact's messages; omit for all"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete pictures sent TO you (from one contact, or from everyone).
+    Like "clear chat": it only removes your copy — pictures you sent stay in
+    the other person's inbox until they expire.
+    """
+    q = delete(Message).where(Message.receiver_id == user.id)
+    if with_email:
+        other = (await db.execute(select(User).where(User.email == _normalise_email(with_email)))).scalars().first()
+        if not other:
+            return {"deleted": 0}
+        q = q.where(Message.sender_id == other.id)
+    result = await db.execute(q)
+    await db.commit()
+    log.info("[Msg] %s cleared %d message(s)%s", user.email, result.rowcount, f" from {with_email}" if with_email else "")
+    return {"deleted": result.rowcount}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4b. PROFILE / ACCOUNT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@app.get("/api/me", response_model=MeResponse, tags=["Account"])
+async def get_me(user: User = Depends(get_current_user)):
+    return MeResponse(user_id=user.id, email=user.email, display_name=user.display_name)
+
+
+@app.put("/api/me", response_model=MeResponse, tags=["Account"])
+async def update_me(
+    req: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the name other people see (1–40 characters)."""
+    user.display_name = req.display_name
+    await db.commit()
+    return MeResponse(user_id=user.id, email=user.email, display_name=user.display_name)
+
+
+@app.delete("/api/me", tags=["Account"])
+async def delete_me(
+    user: User = Depends(get_current_user),
+    token: dict = Depends(current_token_payload),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Permanently delete your account: profile, public keys, and every message
+    you sent or received. Needs a fresh email-code sign-in, like a key reset.
+    """
+    token_age = datetime.now(timezone.utc).timestamp() - float(token.get("iat", 0))
+    if token_age > settings.IDENTITY_RESET_MAX_TOKEN_AGE_SECONDS:
+        raise HTTPException(status_code=403, detail="Sign in again with an email code to delete your account.")
+    await db.execute(delete(Message).where((Message.sender_id == user.id) | (Message.receiver_id == user.id)))
+    await db.execute(delete(OTP).where(OTP.email == user.email))
+    email = user.email
+    await db.delete(user)
+    await db.commit()
+    log.warning("[Account] Deleted account %s", email)
+    return {"message": "Account deleted"}
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 5. ADMIN / DEBUG ROUTES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -530,7 +639,13 @@ async def pool_status(
     """Check how many cover images are available in the pool."""
     unused = await get_unused_count(db)
     total = await get_total_count(db)
-    return PoolStatusResponse(unused_covers=unused, total_covers=total)
+    return PoolStatusResponse(
+        unused_covers=unused,
+        total_covers=total,
+        target_size=settings.POOL_TARGET_SIZE,
+        refill_threshold=settings.POOL_REFILL_THRESHOLD,
+        refilling=refill_in_progress(),
+    )
 
 
 @app.post("/api/admin/seed-pool", tags=["Admin"])
@@ -546,6 +661,15 @@ async def seed_pool(
     log.info("[Admin] %s seeding %d cover image(s)", admin.email, count)
     added = await refill_pool(db, count)
     return {"message": f"Added {added} cover images to the pool"}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 6. PHONE APP (installable web app, served from the same origin)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Mounted last so every /api route above wins. All encryption and image work
+# happens in the phone's browser; this only serves the static files.
+if WEB_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="app")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

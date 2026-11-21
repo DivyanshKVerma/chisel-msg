@@ -36,20 +36,20 @@ def main():
 
     # ── 1. Register Alice & Bob ──────────────────────────
     print("\n[1] Registering Alice...")
-    r = client.post("/api/register", json={"email": "alice@gbu.ac.in"})
+    r = client.post("/api/register", json={"email": "alice@example.com"})
     assert r.status_code == 200, f"Register failed: {r.text}"
     alice_otp = r.json()["otp_for_demo"]
     print(f"    OTP for Alice: {alice_otp}")
 
     print("[1] Registering Bob...")
-    r = client.post("/api/register", json={"email": "bob@gbu.ac.in"})
+    r = client.post("/api/register", json={"email": "bob@example.com"})
     assert r.status_code == 200, f"Register failed: {r.text}"
     bob_otp = r.json()["otp_for_demo"]
     print(f"    OTP for Bob:   {bob_otp}")
 
     # ── 2. Verify OTP → get JWTs ────────────────────────
     print("\n[2] Verifying OTP for Alice...")
-    r = client.post("/api/verify-otp", json={"email": "alice@gbu.ac.in", "code": alice_otp})
+    r = client.post("/api/verify-otp", json={"email": "alice@example.com", "code": alice_otp})
     assert r.status_code == 200, f"Verify failed: {r.text}"
     alice_data = r.json()
     alice_token = alice_data["token"]
@@ -57,7 +57,7 @@ def main():
     print(f"    Alice JWT: {alice_token[:30]}...")
 
     print("[2] Verifying OTP for Bob...")
-    r = client.post("/api/verify-otp", json={"email": "bob@gbu.ac.in", "code": bob_otp})
+    r = client.post("/api/verify-otp", json={"email": "bob@example.com", "code": bob_otp})
     assert r.status_code == 200, f"Verify failed: {r.text}"
     bob_data = r.json()
     bob_token = bob_data["token"]
@@ -69,7 +69,7 @@ def main():
 
     # ── 3. Generate keys on-device & upload public keys ──
     print("\n[3] Generating device keys for Alice...")
-    alice_keys = chisel_core.UserKeys("alice@gbu.ac.in")
+    alice_keys = chisel_core.UserKeys("alice@example.com")
     alice_payload = alice_keys.key_upload_payload()  # includes signed X25519 key
     alice_x25519_pub_hex = alice_payload["x25519_pub_hex"]
     alice_ed25519_pub_hex = alice_payload["ed25519_pub_hex"]
@@ -80,7 +80,7 @@ def main():
     print(f"    Alice Ed25519 pub: {alice_ed25519_pub_hex[:16]}...")
 
     print("[3] Generating device keys for Bob...")
-    bob_keys = chisel_core.UserKeys("bob@gbu.ac.in")
+    bob_keys = chisel_core.UserKeys("bob@example.com")
     bob_payload = bob_keys.key_upload_payload()
     bob_x25519_pub_hex = bob_payload["x25519_pub_hex"]
     bob_ed25519_pub_hex = bob_payload["ed25519_pub_hex"]
@@ -93,7 +93,7 @@ def main():
     # ── 4. Alice fetches Bob's public key ────────────────
     print("\n[4] Alice fetches Bob's public keys from server...")
     alice_pins = chisel_core.KeyPinStore()  # Alice's device-side TOFU pins
-    r = client.get("/api/users/bob@gbu.ac.in/public-keys", headers=alice_headers)
+    r = client.get("/api/users/bob@example.com/public-keys", headers=alice_headers)
     assert r.status_code == 200, f"Key lookup failed: {r.text}"
     bob_pub_data = r.json()
     print(f"    Got Bob's X25519:  {bob_pub_data['x25519_pub_hex'][:16]}...")
@@ -135,7 +135,7 @@ def main():
     with open(stego_path, "rb") as f:
         r = client.post(
             "/api/messages",
-            data={"receiver_email": "bob@gbu.ac.in"},
+            data={"receiver_email": "bob@example.com"},
             files={"stego_image": ("stego.png", f, "image/png")},
             headers=alice_headers,
         )
@@ -173,7 +173,7 @@ def main():
 
     # Reconstruct Alice's signing key from the server
     bob_pins = chisel_core.KeyPinStore()
-    r = client.get("/api/users/alice@gbu.ac.in/public-keys", headers=bob_headers)
+    r = client.get("/api/users/alice@example.com/public-keys", headers=bob_headers)
     alice_pub_data = r.json()
     _, alice_sign_pub_from_server = chisel_core.load_verified_contact(alice_pub_data, bob_pins)
 

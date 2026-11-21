@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Also applies inside the Android app, where no server headers exist -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' blob: data:; connect-src 'self' https://chisel-api-1mkl.onrender.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'">
+  <title>Chisel</title>
+  <meta name="description" content="Private messages, end-to-end encrypted and hidden inside AI-generated pictures.">
+  <meta name="theme-color" content="#1d70b8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Chisel">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preload" href="fonts/arimo-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/arimo-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/compat.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <noscript><p>Chisel needs JavaScript: all encryption happens on your device.</p></noscript>
+  </div>
+</body>
+</html>

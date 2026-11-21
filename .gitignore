@@ -1,0 +1,24 @@
+# Secrets — never commit (use .env.example as the template)
+.env
+.env.*
+!.env.example
+
+# Local databases (contain users, OTP hashes, message blobs)
+*.db
+*.db-journal
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Generated images and test output
+cover_pool/
+_audit_*.png
+test_*_from_server.png
+test_stego_*.png
+ai_stego_test.png
+audit_results*.txt
+
+# macOS
+.DS_Store

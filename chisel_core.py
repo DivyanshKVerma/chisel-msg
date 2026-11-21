@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import secrets
 import struct
 import time
 import uuid
@@ -9,6 +10,7 @@ from PIL import Image
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -131,9 +133,11 @@ def encrypt_and_sign(
     receiver_id: str,
     receiver_enc_pub: x25519.X25519PublicKey,
     ttl_seconds: int = 86400,
+    eph_priv: x25519.X25519PrivateKey | None = None,
 ) -> bytes:
-    # 1. Per-message ephemeral X25519 key pair
-    eph_priv = x25519.X25519PrivateKey.generate()
+    # 1. Per-message ephemeral X25519 key pair (passed in by seal_into_image,
+    #    which also needs it to derive the secret pixel positions)
+    eph_priv = eph_priv or x25519.X25519PrivateKey.generate()
     eph_pub_bytes = eph_priv.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
@@ -317,6 +321,175 @@ def extract_lsb(stego_path: str) -> bytes:
 
 
 # ---------------------------------------------------------
+# 3b. KEYED, SCATTERED STEGANOGRAPHY (v2) — use these in the app
+# ---------------------------------------------------------
+# embed_lsb/extract_lsb above write bits in order from the first pixel, so
+# every change sits in the top rows and ANYONE can pull the bundle out (and
+# read the plaintext sender/receiver JSON in its AAD). v2 fixes both:
+#
+#   header : the 32-byte ephemeral public key, at positions derived from the
+#            RECEIVER's X25519 public key (so only someone who knows who the
+#            image is for can even find it; the key itself looks random).
+#   body   : length + rest of the bundle, at positions derived from the ECDH
+#            shared secret — only the real receiver can compute them.
+#   writes : LSB *matching* (random ±1 when a bit must change) instead of LSB
+#            replacement, which removes the pairs-of-values signature that
+#            chi-square / RS steganalysis looks for.
+#
+# Positions are distinct channel indices (R, G or B of a pixel) drawn from a
+# ChaCha20 keystream, so they are spread uniformly over the whole image.
+
+STEGO_HEADER_INFO = b"CHISEL-v2-stego-header"
+STEGO_BODY_INFO = b"CHISEL-v2-stego-body"
+STEGO_MAX_FILL = 0.25  # never use more than a quarter of the channels
+
+
+def _stego_key(material: bytes, info: bytes, salt: bytes | None = None) -> bytes:
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=info).derive(material)
+
+
+def _positions(key: bytes, total: int, used: set):
+    """Yield distinct channel indices in [0, total), keyed by `key`, skipping `used`."""
+    stream = Cipher(algorithms.ChaCha20(key, b"\x00" * 16), mode=None).encryptor()
+    limit = (1 << 32) - ((1 << 32) % total)  # rejection sampling → no modulo bias
+    while True:
+        block = stream.update(b"\x00" * 4096)
+        for i in range(0, 4096, 4):
+            v = int.from_bytes(block[i : i + 4], "big")
+            if v >= limit:
+                continue
+            idx = v % total
+            if idx not in used:
+                used.add(idx)
+                yield idx
+
+
+def _take(gen, n: int) -> list[int]:
+    return [next(gen) for _ in range(n)]
+
+
+def _write_bits(channels: bytearray, positions: list[int], bits: list[int]) -> int:
+    """LSB matching: if a bit differs, move the value by ±1 at random. Returns #changes."""
+    changed = 0
+    for idx, bit in zip(positions, bits):
+        v = channels[idx]
+        if v & 1 != bit:
+            if v == 0:
+                v = 1
+            elif v == 255:
+                v = 254
+            else:
+                v += 1 if secrets.randbits(1) else -1
+            channels[idx] = v
+            changed += 1
+    return changed
+
+
+def _read_bits(channels: bytes, positions: list[int]) -> list[int]:
+    return [channels[i] & 1 for i in positions]
+
+
+def _header_key(receiver_x_pub_bytes: bytes) -> bytes:
+    return _stego_key(receiver_x_pub_bytes, STEGO_HEADER_INFO)
+
+
+def _body_key(shared_secret: bytes, eph_pub_bytes: bytes) -> bytes:
+    return _stego_key(shared_secret, STEGO_BODY_INFO, salt=eph_pub_bytes)
+
+
+def seal_into_image(
+    plaintext: str,
+    sender: UserKeys,
+    receiver_id: str,
+    receiver_enc_pub: x25519.X25519PublicKey,
+    cover_path: str,
+    output_path: str,
+    ttl_seconds: int = 86400,
+) -> dict:
+    """Encrypt + sign `plaintext` for the receiver and hide it at keyed positions."""
+    eph_priv = x25519.X25519PrivateKey.generate()
+    bundle = encrypt_and_sign(plaintext, sender, receiver_id, receiver_enc_pub, ttl_seconds, eph_priv)
+    eph_pub, rest = bundle[:32], bundle[32:]
+    shared = eph_priv.exchange(receiver_enc_pub)
+
+    img = Image.open(cover_path).convert("RGB")
+    channels = bytearray(img.tobytes())
+    total = len(channels)
+    header_bits_n = 32 * 8
+    body = struct.pack(">I", len(rest)) + rest
+    if header_bits_n + len(body) * 8 > total * STEGO_MAX_FILL:
+        raise ValueError("Message too large for this cover image.")
+
+    # X25519 public keys never set bit 255; randomise it so the header is
+    # uniformly random (RFC 7748 decoders ignore that bit).
+    header = bytearray(eph_pub)
+    header[31] |= secrets.randbits(1) << 7
+
+    used: set = set()
+    hdr_pos = _take(_positions(_header_key(_raw(receiver_enc_pub)), total, used), header_bits_n)
+    body_pos = _take(_positions(_body_key(shared, eph_pub), total, used), len(body) * 8)
+
+    changed = _write_bits(channels, hdr_pos, bytes_to_bits(bytes(header)))
+    changed += _write_bits(channels, body_pos, bytes_to_bits(body))
+
+    Image.frombytes("RGB", img.size, bytes(channels)).save(output_path, format="PNG")
+    bits_used = header_bits_n + len(body) * 8
+    return {
+        "payload_bytes": len(bundle),
+        "bits_used": bits_used,
+        "capacity_bits": total,
+        "utilization_pct": bits_used / total * 100,
+        "channels_changed": changed,
+    }
+
+
+def _locate(channels: bytes, receiver: UserKeys) -> tuple[bytes, list[int], list[int]]:
+    """Receiver side: find the header and body positions. Returns (eph_pub, hdr_pos, body_pos)."""
+    total = len(channels)
+    used: set = set()
+    hdr_pos = _take(_positions(_header_key(receiver.x25519_pub_bytes()), total, used), 32 * 8)
+    eph = bytearray(bits_to_bytes(_read_bits(channels, hdr_pos)))
+    eph[31] &= 0x7F
+    eph = bytes(eph)
+    not_found = ValueError(
+        "No CHISEL message for this key in the image "
+        "(wrong receiver, rotated/erased key, or not a CHISEL image)."
+    )
+    try:
+        shared = receiver.enc_priv.exchange(x25519.X25519PublicKey.from_public_bytes(eph))
+    except ValueError as e:  # low-order / invalid point from random header bits
+        raise not_found from e
+
+    body_gen = _positions(_body_key(shared, eph), total, used)
+    len_pos = _take(body_gen, 32)
+    (rest_len,) = struct.unpack(">I", bits_to_bytes(_read_bits(channels, len_pos)))
+    if not (12 + 2 + 4 + 16 + 64) <= rest_len <= int(total * STEGO_MAX_FILL / 8):
+        raise not_found
+    rest_pos = _take(body_gen, rest_len * 8)
+    return eph, hdr_pos, len_pos + rest_pos
+
+
+def open_from_image(
+    stego_path: str,
+    receiver: UserKeys,
+    sender_sign_pub: ed25519.Ed25519PublicKey,
+    seen_msg_ids: set | None = None,
+) -> tuple[str, dict]:
+    """Find, verify and decrypt a message hidden with seal_into_image."""
+    channels = Image.open(stego_path).convert("RGB").tobytes()
+    eph, _hdr, body_pos = _locate(channels, receiver)
+    rest = bits_to_bytes(_read_bits(channels, body_pos[32:]))
+    return verify_and_decrypt(eph + rest, receiver, sender_sign_pub, seen_msg_ids)
+
+
+def payload_positions(stego_path: str, receiver: UserKeys) -> list[int]:
+    """Channel indices carrying the message (receiver-only; for tests and visualisation)."""
+    channels = Image.open(stego_path).convert("RGB").tobytes()
+    _eph, hdr, body = _locate(channels, receiver)
+    return hdr + body
+
+
+# ---------------------------------------------------------
 # 4. METRICS & HELPER UTILITIES
 # ---------------------------------------------------------
 def calculate_psnr(cover_path: str, stego_path: str) -> float:
@@ -360,21 +533,21 @@ if __name__ == "__main__":
     # Step A: Sign-up / Daily Key Generation
     alice = UserKeys("alice@gbu.ac.in")
     bob = UserKeys("bob@gbu.ac.in")
+    eve = UserKeys("eve@gbu.ac.in")
     secret_message = "Meet at the library at 5 PM. Project viva slides are finalized."
 
-    # Step B: Encrypt, Sign & Embed
-    bundle = encrypt_and_sign(secret_message, alice, bob.user_id, bob.enc_pub)
-    stats = embed_lsb(cover_file, bundle, stego_file)
+    # Step B: Encrypt, sign and hide at keyed, scattered positions
+    stats = seal_into_image(secret_message, alice, bob.user_id, bob.enc_pub, cover_file, stego_file)
     psnr = calculate_psnr(cover_file, stego_file)
 
     print("\n--- EMBEDDING REPORT ---")
-    print(f"Bundle Size : {stats['payload_bytes']} bytes ({stats['bits_used']} bits)")
+    print(f"Bundle Size : {stats['payload_bytes']} bytes ({stats['bits_used']} bits incl. length)")
     print(f"Capacity    : {stats['utilization_pct']:.4f}% of 512x512 RGB LSB space")
+    print(f"Changed     : {stats['channels_changed']} channel values, each by ±1, spread over the image")
     print(f"Image PSNR  : {psnr:.2f} dB (values > 50 dB are visually indistinguishable)")
 
-    # Step C: Receiver Tap-to-Decrypt
-    extracted_bundle = extract_lsb(stego_file)
-    decrypted_text, meta = verify_and_decrypt(extracted_bundle, bob, alice.sign_pub)
+    # Step C: Receiver Tap-to-Decrypt (only Bob's private key can locate the bits)
+    decrypted_text, meta = open_from_image(stego_file, bob, alice.sign_pub)
 
     print("\n--- RECEIVER DECRYPTION ---")
     print(f"Sender      : {meta['sender']}")
@@ -382,18 +555,23 @@ if __name__ == "__main__":
     print(f"Plaintext   : {decrypted_text}")
     assert decrypted_text == secret_message, "Round-trip mismatch!"
 
-    # Step D: Tamper Test (flip 1 LSB inside the payload region)
-    t_img = Image.open(stego_file).convert("RGB")
-    t_px = list(t_img.get_flattened_data())
-    r, g, b = t_px[50]  # Pixel inside the embedded ciphertext region
-    t_px[50] = (r ^ 1, g, b)
-    t_img.putdata(t_px)
-    t_img.save(tampered_file, format="PNG")
-
-    print("\n--- TAMPER TEST (1-bit pixel flip) ---")
+    print("\n--- WRONG RECEIVER ---")
     try:
-        bad_bundle = extract_lsb(tampered_file)
-        verify_and_decrypt(bad_bundle, bob, alice.sign_pub)
+        open_from_image(stego_file, eve, alice.sign_pub)
+        print("[!] FAIL: Eve found the message!")
+    except ValueError as err:
+        print(f"[PASS] Eve can't locate it -> {err}")
+
+    # Step D: Tamper Test (flip 1 bit that carries the payload)
+    positions = payload_positions(stego_file, bob)
+    img = Image.open(stego_file).convert("RGB")
+    ch = bytearray(img.tobytes())
+    ch[positions[-100]] ^= 1
+    Image.frombytes("RGB", img.size, bytes(ch)).save(tampered_file, format="PNG")
+
+    print("\n--- TAMPER TEST (1 payload bit flipped) ---")
+    try:
+        open_from_image(tampered_file, bob, alice.sign_pub)
         print("[!] FAIL: Tampered image was accepted!")
     except ValueError as err:
         print(f"[PASS] Rejected cleanly -> {err}")
@@ -402,7 +580,7 @@ if __name__ == "__main__":
     print("\n--- 24H KEY ROTATION (CRYPTOGRAPHIC ERASURE) TEST ---")
     bob.rotate_daily_key()
     try:
-        verify_and_decrypt(extracted_bundle, bob, alice.sign_pub)
+        open_from_image(stego_file, bob, alice.sign_pub)
         print("[!] FAIL: Old message decrypted after key rotation!")
     except ValueError as err:
-        print(f"[PASS] Old ciphertext permanently unreadable -> {err}")
+        print(f"[PASS] Old message permanently unreadable -> {err}")

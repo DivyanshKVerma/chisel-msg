@@ -411,14 +411,16 @@ def main():
         assert len(bundle) > 100
     timed("On-device: X25519 ECDH → HKDF → AES-256-GCM → Ed25519 sign", e2)
 
-    # E3: On-device LSB embedding
+    # E3: On-device encrypt + hide at keyed, scattered positions (v2)
     stego_path = "_audit_stego.png"
     stats = None
     def e3():
         nonlocal stats
-        stats = chisel_core.embed_lsb(cover_path, bundle, stego_path)
+        stats = chisel_core.seal_into_image(
+            secret_msg, alice_keys, bob_keys.user_id, bob_enc_pub_from_server, cover_path, stego_path
+        )
         assert stats["utilization_pct"] < 5, "Payload uses too much capacity"
-    timed("On-device: LSB embed into 512×512 PNG", e3)
+    timed("On-device: encrypt + hide at keyed scattered positions (512×512 PNG)", e3)
 
     # E4: PSNR check
     psnr_val = None
@@ -482,12 +484,12 @@ def main():
     dl_path = "_audit_downloaded.png"
     with open(dl_path, "wb") as f:
         f.write(dl_bytes)
-    extracted_bundle = None
+    payload_pos = None
     def e10():
-        nonlocal extracted_bundle
-        extracted_bundle = chisel_core.extract_lsb(dl_path)
-        assert len(extracted_bundle) == len(bundle)
-    timed("On-device: LSB extract from downloaded PNG", e10)
+        nonlocal payload_pos
+        payload_pos = chisel_core.payload_positions(dl_path, bob_keys)
+        assert len(payload_pos) == stats["bits_used"], (len(payload_pos), stats["bits_used"])
+    timed("On-device: Bob locates the hidden bits with his private key", e10)
 
     # E11: Fetch sender's signing key + verify + decrypt
     decrypted = None
@@ -496,8 +498,8 @@ def main():
         nonlocal decrypted
         d = client.get("/api/users/alice@gbu.ac.in/public-keys", headers=bob_h).json()
         _, alice_sign_pub = chisel_core.load_verified_contact(d, bob_pins)
-        decrypted, meta = chisel_core.verify_and_decrypt(
-            extracted_bundle, bob_keys, alice_sign_pub, seen_msg_ids=bob_seen
+        decrypted, meta = chisel_core.open_from_image(
+            dl_path, bob_keys, alice_sign_pub, seen_msg_ids=bob_seen
         )
         assert decrypted == secret_msg
         assert meta["sender"] == "alice@gbu.ac.in"
@@ -592,36 +594,35 @@ def main():
     print("\n── G. CRYPTO INTEGRITY (on-device) ──────────────────────")
 
     # G1: Tamper detection (flip 1 bit in stego image)
+    def _flip(src, channel_idx, dst):
+        img = Image.open(src).convert("RGB")
+        ch = bytearray(img.tobytes())
+        ch[channel_idx] ^= 1
+        Image.frombytes("RGB", img.size, bytes(ch)).save(dst, format="PNG")
+
     def g1():
-        t_img = Image.open(stego_path).convert("RGB")
-        pixels = list(t_img.getdata())
-        r, g, b = pixels[50]
-        pixels[50] = (r ^ 1, g, b)
-        t_img_new = Image.new("RGB", t_img.size)
-        t_img_new.putdata(pixels)
         tampered_path = "_audit_tampered.png"
-        t_img_new.save(tampered_path, format="PNG")
-        bad_bundle = chisel_core.extract_lsb(tampered_path)
-        alice_sign_pub = alice_keys.sign_pub   # already verified + pinned in E11
+        # A body bit near the end of the payload (inside the signed bundle)
+        _flip(dl_path, payload_pos[-200], tampered_path)
         try:
-            chisel_core.verify_and_decrypt(bad_bundle, bob_keys, alice_sign_pub)
+            chisel_core.open_from_image(tampered_path, bob_keys, alice_keys.sign_pub)
             raise AssertionError("Tampered image was accepted!")
         except ValueError as e:
-            assert "TAMPER" in str(e) or "DECRYPTION FAILED" in str(e)
+            assert "TAMPER" in str(e) or "DECRYPTION FAILED" in str(e) or "No CHISEL message" in str(e), e
         finally:
             os.remove(tampered_path)
-    timed("Tamper test: 1-bit pixel flip → signature rejected", g1)
+    timed("Tamper test: 1 flipped payload bit → rejected", g1)
 
     # G2: Wrong receiver cannot decrypt
     def g2():
         eve_keys = chisel_core.UserKeys("eve@gbu.ac.in")
         alice_sign_pub = alice_keys.sign_pub   # already verified + pinned in E11
         try:
-            chisel_core.verify_and_decrypt(extracted_bundle, eve_keys, alice_sign_pub)
+            chisel_core.open_from_image(dl_path, eve_keys, alice_sign_pub)
             raise AssertionError("Eve decrypted Bob's message!")
-        except ValueError:
-            pass  # Expected
-    timed("Wrong receiver (Eve) cannot decrypt Bob's message", g2)
+        except ValueError as e:
+            assert "No CHISEL message" in str(e), e  # Eve can't even locate it
+    timed("Wrong receiver (Eve) can't even locate Bob's hidden bits", g2)
 
     # G3: Cryptographic erasure (key rotation)
     def g3():
@@ -629,7 +630,7 @@ def main():
         bob_keys.rotate_daily_key()
         alice_sign_pub = alice_keys.sign_pub   # already verified + pinned in E11
         try:
-            chisel_core.verify_and_decrypt(extracted_bundle, bob_keys, alice_sign_pub)
+            chisel_core.open_from_image(dl_path, bob_keys, alice_sign_pub)
             raise AssertionError("Old ciphertext decrypted after key rotation!")
         except ValueError:
             pass  # Expected — cryptographic erasure works
@@ -667,6 +668,79 @@ def main():
     timed("Replay protection: same bundle delivered twice → rejected", g5)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # SECTION J: STEGANOGRAPHY — keyed scattering vs. old sequential LSB
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    print("\n── J. STEGANOGRAPHY (keyed scatter) ─────────────────────")
+
+    def _diff(a_path, b_path):
+        a = Image.open(a_path).convert("RGB").tobytes()
+        b = Image.open(b_path).convert("RGB").tobytes()
+        idx = [i for i in range(len(a)) if a[i] != b[i]]
+        deltas = {b[i] - a[i] for i in idx}
+        rows = {i // (512 * 3) for i in idx}
+        return idx, deltas, rows
+
+    sx, sy = chisel_core.UserKeys("sx@gbu.ac.in"), chisel_core.UserKeys("sy@gbu.ac.in")
+    v1_path, v2_path = "_audit_v1.png", "_audit_v2.png"
+    demo = "Steganography check: where do the bits go?"
+    chisel_core.embed_lsb(cover_path, chisel_core.encrypt_and_sign(demo, sx, sy.user_id, sy.enc_pub), v1_path)
+    chisel_core.seal_into_image(demo, sx, sy.user_id, sy.enc_pub, cover_path, v2_path)
+
+    def j1():
+        _, _, rows_v1 = _diff(cover_path, v1_path)
+        _, _, rows_v2 = _diff(cover_path, v2_path)
+        print(f"              rows touched: old sequential = {len(rows_v1)}, keyed scatter = {len(rows_v2)} of 512")
+        assert len(rows_v1) <= 3 and len(rows_v2) >= 300, (len(rows_v1), len(rows_v2))
+    timed("Changes spread over the whole image (≥300 of 512 rows), not the top 2", j1)
+
+    def j2():
+        _, deltas, _ = _diff(cover_path, v2_path)
+        assert deltas == {1, -1} or deltas <= {1, -1} and len(deltas) == 2, deltas
+    timed("LSB matching: values move by +1 and -1 (no LSB-replacement fingerprint)", j2)
+
+    def j3():
+        def seq_lsb_bytes(path, n=4000):
+            ch = Image.open(path).convert("RGB").tobytes()
+            bits = [c & 1 for c in ch[: n * 8]]
+            return chisel_core.bits_to_bytes(bits)
+        assert b'"sender"' in seq_lsb_bytes(v1_path), "v1 should leak (sanity)"
+        assert b'"sender"' not in seq_lsb_bytes(v2_path), "metadata readable without keys!"
+    timed("Outsider reading LSBs in order: old format leaks sender JSON, new doesn't", j3)
+
+    def j4():
+        try:
+            chisel_core.extract_lsb(v2_path)
+            raise AssertionError("old extractor found a payload")
+        except (ValueError, struct_error):
+            pass
+    struct_error = __import__("struct").error
+    timed("Old sequential extractor finds nothing in a new image", j4)
+
+    def j5():
+        p1 = chisel_core.payload_positions(v2_path, sy)
+        v2b = "_audit_v2b.png"
+        chisel_core.seal_into_image(demo, sx, sy.user_id, sy.enc_pub, cover_path, v2b)
+        p2 = chisel_core.payload_positions(v2b, sy)
+        os.remove(v2b)
+        same_header = p1[:256] == p2[:256]
+        overlap = len(set(p1[256:]) & set(p2[256:])) / len(p1[256:])
+        print(f"              header positions shared per receiver: {same_header} | body overlap between 2 messages: {overlap:.1%}")
+        assert same_header and overlap < 0.05
+    timed("Body positions change with every message (keyed by its one-time secret)", j5)
+
+    def j6():
+        pos = set(chisel_core.payload_positions(v2_path, sy))
+        free = next(i for i in range(10_000, 700_000) if i not in pos)
+        _flip(v2_path, free, "_audit_v2c.png")
+        text, _ = chisel_core.open_from_image("_audit_v2c.png", sy, sx.sign_pub)
+        os.remove("_audit_v2c.png")
+        assert text == demo
+    timed("Editing a pixel outside the payload doesn't break the message", j6)
+
+    for f in (v1_path, v2_path):
+        os.remove(f)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # SECTION H: MESSAGE LIFECYCLE
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     print("\n── H. MESSAGE LIFECYCLE ─────────────────────────────────")
@@ -678,8 +752,8 @@ def main():
         r = client.put("/api/keys", json=bob_keys.key_upload_payload(), headers=bob_h)
         assert r.status_code == 200, r.text
         new_bob_enc_pub = bob_keys.enc_pub
-        b = chisel_core.encrypt_and_sign("delete me", alice_keys, "bob@gbu.ac.in", new_bob_enc_pub)
-        s = chisel_core.embed_lsb(cover_path, b, "_audit_del.png")
+        chisel_core.seal_into_image("delete me", alice_keys, "bob@gbu.ac.in", new_bob_enc_pub,
+                                    cover_path, "_audit_del.png")
         with open("_audit_del.png", "rb") as f:
             r = client.post(
                 "/api/messages",

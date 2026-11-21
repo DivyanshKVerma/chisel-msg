@@ -122,15 +122,13 @@ def main():
     secret_msg = "CHISEL integration test: end-to-end encrypted stego message!"
     print(f"\n[6] Alice encrypts: \"{secret_msg}\"")
 
-    bundle = chisel_core.encrypt_and_sign(
-        secret_msg, alice_keys, bob_keys.user_id, bob_enc_pub_from_server
-    )
-    print(f"    Encrypted bundle: {len(bundle)} bytes")
-
     stego_path = "test_stego_upload.png"
-    stats = chisel_core.embed_lsb(cover_path, bundle, stego_path)
+    stats = chisel_core.seal_into_image(
+        secret_msg, alice_keys, bob_keys.user_id, bob_enc_pub_from_server, cover_path, stego_path
+    )
     psnr = chisel_core.calculate_psnr(cover_path, stego_path)
-    print(f"    LSB embedded:     {stats['utilization_pct']:.4f}% capacity used")
+    print(f"    Encrypted bundle: {stats['payload_bytes']} bytes")
+    print(f"    Hidden at keyed, scattered positions: {stats['utilization_pct']:.4f}% capacity used")
     print(f"    PSNR:             {psnr:.2f} dB")
 
     print("[6] Uploading stego PNG to server...")
@@ -170,9 +168,8 @@ def main():
         f.write(downloaded_stego)
 
     # ── 9. Bob extracts + verifies + decrypts ────────────
-    print("\n[9] Bob extracts LSB payload...")
-    extracted_bundle = chisel_core.extract_lsb(dl_stego_path)
-    print(f"    Extracted bundle: {len(extracted_bundle)} bytes")
+    print("\n[9] Bob locates the payload with his private key...")
+    print(f"    Payload bits found: {len(chisel_core.payload_positions(dl_stego_path, bob_keys))}")
 
     # Reconstruct Alice's signing key from the server
     bob_pins = chisel_core.KeyPinStore()
@@ -181,8 +178,8 @@ def main():
     _, alice_sign_pub_from_server = chisel_core.load_verified_contact(alice_pub_data, bob_pins)
 
     print("[9] Verifying Ed25519 signature + decrypting AES-256-GCM...")
-    decrypted, meta = chisel_core.verify_and_decrypt(
-        extracted_bundle, bob_keys, alice_sign_pub_from_server
+    decrypted, meta = chisel_core.open_from_image(
+        dl_stego_path, bob_keys, alice_sign_pub_from_server
     )
 
     print(f"\n    ┌─────────────────────────────────────────────────┐")

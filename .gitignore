@@ -22,3 +22,6 @@ audit_results*.txt
 
 # macOS
 .DS_Store
+
+# Live test output images
+live_test_output/

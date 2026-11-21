@@ -108,12 +108,10 @@ if __name__ == "__main__":
     bob = chisel_core.UserKeys("bob@gbu.ac.in")
     msg = "Phase 2 integration check: real AI cover image carrying AES-256-GCM + Ed25519 payload."
 
-    bundle = chisel_core.encrypt_and_sign(msg, alice, bob.user_id, bob.enc_pub)
-    stats = chisel_core.embed_lsb(test_cover, bundle, test_stego)
+    stats = chisel_core.seal_into_image(msg, alice, bob.user_id, bob.enc_pub, test_cover, test_stego)
     psnr = chisel_core.calculate_psnr(test_cover, test_stego)
 
-    extracted = chisel_core.extract_lsb(test_stego)
-    recovered, meta = chisel_core.verify_and_decrypt(extracted, bob, alice.sign_pub)
+    recovered, meta = chisel_core.open_from_image(test_stego, bob, alice.sign_pub)
 
     print("\n=== PHASE 1 + PHASE 2 INTEGRATION CHECK ===")
     print(f"Cover Image : {test_cover}")

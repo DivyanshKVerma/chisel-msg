@@ -4,7 +4,7 @@
 
 **Cryptographic Hybrid Image-Steganographic Ephemeral Layer**: a messenger for Android and the web that hides end-to-end encrypted text inside AI-generated pictures.
 
-Made by **Divyansh K Verma** ([@DivyanshKVerma](https://github.com/DivyanshKVerma)) and **Saatwika Saini** ([@SaatwikaSaini](https://github.com/SaatwikaSaini)).
+Made by **Divyansh Kumar Verma** ([@DivyanshKVerma](https://github.com/DivyanshKVerma)) and **Saatwika Saini** ([@SaatwikaSaini](https://github.com/SaatwikaSaini)).
 
 **Version 1.0.0** · Android 7.0+ · Server on Render · [Walkthrough with screenshots](docs/WALKTHROUGH.md)
 
@@ -73,7 +73,7 @@ One app, two ways to get it: the **Android APK** (Capacitor) or the **web app** 
 |---|---|---|
 | ![Info page](docs/images/app_info.png) | ![Settings with theme choice](docs/images/app_settings.png) | ![Chat in dark mode](docs/images/app_dark.png) |
 
-**Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), form fields with 2 px borders, square buttons with a shadow, yellow focus states, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Glassmorphism (backdrop blur and translucency) is used: the floating bottom tab bar, chat header, and message composer. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app.
+**Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), form fields with 2 px borders, square buttons with a shadow, yellow focus states, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Glassmorphism (backdrop blur and translucency) is used only where requested: the floating bottom tab bar, chat header, and message composer. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app. No crown or government logotype is used.
 
 | Screen | What it does |
 |---|---|

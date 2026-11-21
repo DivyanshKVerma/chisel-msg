@@ -2,6 +2,8 @@
 
 # Chisel
 
+
+
 **Cryptographic Hybrid Image-Steganographic Ephemeral Layer**: a messenger for Android and the web that hides end-to-end encrypted text inside AI-generated pictures.
 
 Made by **Divyansh Kumar Verma** ([@DivyanshKVerma](https://github.com/DivyanshKVerma)) and **Saatwika Saini** ([@SaatwikaSaini](https://github.com/SaatwikaSaini)).

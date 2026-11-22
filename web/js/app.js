@@ -8,6 +8,7 @@ import * as D from "./data.js";
 import { api, ApiError, setToken, setOnUnauthorized } from "./api.js";
 import { h, icon, toast, modal, avatar, stamp, listTime, dayLabel, timeLeft } from "./ui.js";
 import { APP_VERSION, API_BASE } from "./config.js";
+import * as N from "./notify.js";
 
 const DAY = 24 * 3600 * 1000;
 const MAX_CHARS = 2000;
@@ -65,6 +66,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.reveal
 async function signOut(message) {
   await store.del("session");
   setToken(null);
+  N.signedOut();
   for (const [k, url] of S.images) if (typeof url === "string" && !k.startsWith("bytes:")) URL.revokeObjectURL(url);
   Object.assign(S, { me: null, name: null, keys: null, inbox: [], sent: [], pending: {}, contacts: new Map(), read: new Set(), images: new Map(), drafts: {}, reveal: null, signin: { step: "email" } });
   history.replaceState(null, "");
@@ -153,6 +155,12 @@ function refresh({ quiet = true } = {}) {
       }
       S.sent = await D.sentMessages(S.me);
       S.loadError = null;
+      const away = N.inBackground();
+      const fresh = await N.inboxChanged(S.me, S.inbox, { read: S.read, nameOf, hidden: away });
+      if (!away && S.route.name !== "chats") {
+        const others = [...new Set(fresh.map((m) => m.sender_email))].filter((e) => !(S.route.name === "chat" && S.route.email === e));
+        if (others.length) toast(others.length === 1 ? `New picture from ${nameOf(others[0])}` : `New pictures from ${others.length} people`);
+      }
     } catch (e) {
       S.loadError = friendly(e);
       if (!quiet) toast(S.loadError);
@@ -224,8 +232,9 @@ function update() {
 function header(title, { back, action } = {}) {
   return h("header", { class: "header" }, h("div", { class: "header-inner" },
     back ? h("button", { class: "icon-btn", type: "button", "aria-label": "Back", onclick: goBack }, icon("back")) : null,
-    h("span", { class: "title" }, title), action || null));
+    typeof title === "string" ? h("span", { class: "title" }, title) : title, action || null));
 }
+const wordmark = () => h("span", { class: "wordmark" }, h("img", { src: "icons/chisel-wordmark-header.png", alt: "CHISEL", width: "100", height: "34" }));
 
 function tabbar(active) {
   const tabs = [["info", "Info", "info"], ["chats", "Chats", "chats"], ["settings", "Settings", "settings"]];
@@ -248,13 +257,13 @@ const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 // ── sign in ───────────────────────────────────────────────
 function signInView() {
   const st = S.signin;
-  const wrap = (...kids) => h("div", { class: "app" }, header("Chisel"), h("main", { class: "container", id: "main" }, ...kids));
+  const wrap = (...kids) => h("div", { class: "app" }, header(wordmark()), h("main", { class: "container", id: "main" }, ...kids));
 
   if (st.step === "email") {
     const input = h("input", { class: `input${st.error ? " error" : ""}`, id: "email", name: "email", type: "email", autocomplete: "email", spellcheck: "false", inputmode: "email", value: st.email || "" });
     return wrap(
       errorSummary(st.error && [[st.error, "email"]]),
-      h("h1", { class: "h-xl" }, "Sign in to Chisel"),
+      h("h1", { class: "h-xl" }, "Sign in to CHISEL"),
       h("p", { class: "body-l" }, "Send private messages hidden inside AI-painted pictures. Only the person you send them to can read them."),
       h("form", { novalidate: true, onsubmit: async (e) => {
         e.preventDefault();
@@ -335,6 +344,7 @@ async function enterApp(email, token, keys, name) {
   setToken(token);
   Object.assign(S, { me: email, name, keys, signin: { step: "email" } });
   await loadLocal();
+  startNotifications(token);
   nav({ name: "chats" }, { replace: true });
   refresh();
 }
@@ -344,16 +354,55 @@ function chatsView() {
   const search = h("input", { class: "input", id: "search", type: "search", placeholder: "Search chats", "aria-label": "Search chats", value: S.search || "",
     oninput: (e) => { S.search = e.target.value; fillChatList(); } });
   S.refs.list = h("ul", { class: "chat-list", "aria-label": "Chats" });
+  const ptr = h("div", { class: "ptr", "aria-live": "polite" });
   const v = h("div", { class: "app" },
-    header("Chisel", { action: h("button", { class: "icon-btn", type: "button", "aria-label": "Refresh", onclick: () => refresh({ quiet: false }) }, icon("refresh")) }),
+    header(wordmark()),
+    ptr,
     h("main", { class: "container page-pad", id: "main" },
       h("h1", { class: "visually-hidden" }, "Chats"),
       h("div", { class: "search" }, icon("search"), search),
       S.refs.list),
     h("button", { class: "fab", type: "button", "aria-label": "New chat", onclick: () => nav({ name: "new" }) }, icon("newchat")),
     tabbar("chats"));
+  pullToRefresh(v, ptr);
   fillChatList();
   return v;
+}
+
+/** Pull down at the top of the chats list to check for new pictures. */
+function pullToRefresh(view, ptr) {
+  const READY = 64, MAX = 96;
+  let startY = null, dist = 0, busy = false;
+  const show = (content) => ptr.replaceChildren(h("span", { class: "ptr-row" }, ...content));
+  const reset = () => { ptr.classList.remove("pulling", "ready"); ptr.style.height = "0px"; dist = 0; };
+  view.addEventListener("touchstart", (e) => {
+    if (busy || window.scrollY > 0 || e.touches.length !== 1 || S.reveal) return;
+    startY = e.touches[0].clientY; dist = 0;
+  }, { passive: true });
+  view.addEventListener("touchmove", (e) => {
+    if (startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || window.scrollY > 0) { reset(); return; }
+    dist = Math.min(dy * 0.5, MAX);
+    ptr.classList.add("pulling");
+    ptr.classList.toggle("ready", dist >= READY);
+    ptr.style.height = `${dist}px`;
+    show([icon("arrowdown"), dist >= READY ? "Release to refresh" : "Pull to refresh"]);
+  }, { passive: true });
+  const end = async (cancelled) => {
+    if (startY == null) return;
+    startY = null;
+    if (cancelled || dist < READY) return reset();
+    busy = true;
+    ptr.classList.remove("pulling", "ready");
+    ptr.style.height = "48px";
+    show([h("span", { class: "spinner", "aria-hidden": "true" }), "Checking for new pictures…"]);
+    await refresh({ quiet: false });
+    busy = false;
+    reset();
+  };
+  view.addEventListener("touchend", () => end(false));
+  view.addEventListener("touchcancel", () => end(true));
 }
 
 function fillChatList() {
@@ -398,12 +447,14 @@ function chatView() {
   const v = h("div", { class: "chat", id: "chat" },
     h("header", { class: "chat-head glass" },
       h("button", { class: "icon-btn", type: "button", "aria-label": "Back to chats", onclick: goBack }, icon("back")),
-      avatar(nameOf(email), email, true),
-      h("div", { class: "who" }, h("div", { class: "n" }, nameOf(email)), h("div", { class: "e" }, email)),
+      h("button", { class: "profile", type: "button", "aria-label": `${nameOf(email)}: show safety number`, onclick: () => showContact(email) },
+        avatar(nameOf(email), email, true),
+        h("div", { class: "who" }, h("div", { class: "n" }, nameOf(email)), h("div", { class: "e" }, email))),
       h("button", { class: "icon-btn", type: "button", "aria-label": "Delete this chat", onclick: () => deleteChat(email) }, icon("trash"))),
     S.refs.thread,
     h("form", { class: "composer glass-light", onsubmit: (e) => { e.preventDefault(); submit(); } }, box, send));
   S.refs.chat = v;
+  N.clearFor(email);
   markChatRead(email);
   fillThread(true);
   requestAnimationFrame(() => grow(box));
@@ -472,7 +523,7 @@ async function sendMessage(email, text, retryOf = null) {
   try {
     let them;
     try { them = await contactKeys(email); }
-    catch (e) { if (e.status === 404) throw new Error(`${email} isn't on Chisel yet.`); throw e; }
+    catch (e) { if (e.status === 404) throw new Error(`${email} isn't on CHISEL yet.`); throw e; }
     step("Getting a picture…");
     let cover;
     for (let tries = 0; ; tries++) {
@@ -566,6 +617,54 @@ async function deleteChat(email) {
   } catch (e) { toast(friendly(e)); }
 }
 
+/** Contact sheet: their safety number (and yours) to compare in person. */
+async function showContact(email) {
+  let pub = null;
+  try { pub = (await contactKeys(email)).signPub; }
+  catch (e) { pub = await store.pinsFor(S.me).get(email); if (!pub) return toast(friendly(e)); }
+  await modal({
+    title: nameOf(email),
+    body: h("div", {},
+      h("p", { class: "body secondary" }, email),
+      h("h3", { class: "h-m" }, "Their safety number"),
+      h("p", { class: "safety" }, C.fingerprint(pub)),
+      h("p", { class: "body" }, `Ask ${nameOf(email)} to open Settings → Your safety number on their phone. If the digits match, nobody is secretly in the middle of your chat.`),
+      h("h3", { class: "h-s" }, "Your safety number"),
+      h("p", { class: "safety" }, C.fingerprint(S.keys.signPub))),
+    actions: [{ label: "Done", value: true }],
+  });
+}
+
+// ── notifications ─────────────────────────────────────────
+let notifyHooked = false;
+async function startNotifications(token) {
+  if (!notifyHooked) { N.onOpen((email) => { if (S.me) nav({ name: "chat", email }); }); notifyHooked = true; }
+  N.signedIn(S.me, token, API_BASE || location.origin);
+  // Android asks once for permission; browsers need a tap in Settings first
+  if (window.Capacitor?.isNativePlatform?.() && N.wanted() && (await N.permission()) === "prompt") N.requestPermission();
+}
+
+function notificationsSection() {
+  const box = h("div", {});
+  const fill = async () => {
+    const p = await N.permission();
+    const on = N.wanted();
+    const explain = h("p", { class: "body secondary" }, "Notifications say who sent you a picture, never what it says. The message stays locked until you tap it.");
+    let kids;
+    if (p === "unsupported") kids = [h("p", { class: "body" }, "This browser can't show notifications.")];
+    else if (p === "denied") kids = [h("p", { class: "body" }, window.Capacitor?.isNativePlatform?.()
+      ? "Notifications are blocked. Allow them for CHISEL in your phone's settings (Apps → CHISEL → Notifications)."
+      : "Notifications are blocked for this site. Allow them in your browser's site settings, then reload."), explain];
+    else if (on && p === "granted") kids = [h("p", { class: "body" }, h("b", {}, "On."), " You'll be told when a new picture arrives."), explain,
+      h("button", { class: "btn secondary-btn", type: "button", onclick: async () => { await N.setWanted(false); fill(); } }, "Turn off notifications")];
+    else kids = [h("p", { class: "body" }, h("b", {}, "Off.")), explain,
+      h("button", { class: "btn", type: "button", onclick: async () => { await N.setWanted(true); fill(); } }, "Turn on notifications")];
+    box.replaceChildren(...kids);
+  };
+  fill();
+  return box;
+}
+
 // ── new chat ──────────────────────────────────────────────
 function newChatView() {
   const st = (S.newChat ??= {});
@@ -585,13 +684,13 @@ function newChatView() {
           S.newChat = null;
           nav({ name: "chat", email }, { replace: true });
         } catch (err) {
-          Object.assign(st, { busy: false, error: err.status === 404 ? `${email} isn't on Chisel yet. Ask them to sign up first.` : friendly(err) });
+          Object.assign(st, { busy: false, error: err.status === 404 ? `${email} isn't on CHISEL yet. Ask them to sign up first.` : friendly(err) });
           render();
         }
       } },
         h("div", { class: `form-group${st.error ? " error" : ""}` },
           h("label", { class: "label", for: "to" }, "Their email address"),
-          h("span", { class: "hint" }, "They need to have signed up to Chisel."),
+          h("span", { class: "hint" }, "They need to have signed up to CHISEL."),
           fieldError(st.error), input),
         h("button", { class: "btn", type: "submit", disabled: st.busy || null }, st.busy ? "Checking…" : "Start chat")),
       known.length ? [h("h2", { class: "h-m" }, "People you've talked to"),
@@ -605,10 +704,10 @@ function infoView() {
   const term = (t, d) => h("details", { class: "details" }, h("summary", {}, t), h("div", { class: "details-text" }, d));
   const dev = (name, user) => h("div", { class: "dev-card" }, avatar(name, user),
     h("div", {}, h("p", { class: "h-s" }, name), h("a", { href: `https://github.com/${user}`, target: "_blank", rel: "noopener noreferrer" }, `github.com/${user}`)));
-  return h("div", { class: "app" }, header("About Chisel"),
+  return h("div", { class: "app" }, header("About CHISEL"),
     h("main", { class: "container page-pad", id: "main" },
-      h("h1", { class: "h-xl" }, "Chisel", h("span", { class: "caption" }, "Secret messages, hidden in plain sight.")),
-      h("p", { class: "body-l" }, "Chisel lets you send a private message that travels inside an ordinary-looking picture. Anyone who sees the picture just sees a painting. Only the person you sent it to can find and read the words inside."),
+      h("h1", { class: "h-xl" }, "CHISEL", h("span", { class: "caption" }, "Secret messages, hidden in plain sight.")),
+      h("p", { class: "body-l" }, "CHISEL lets you send a private message that travels inside an ordinary-looking picture. Anyone who sees the picture just sees a painting. Only the person you sent it to can find and read the words inside."),
 
       h("h2", { class: "h-l" }, "How it works"),
       h("ol", { class: "steps" },
@@ -622,7 +721,7 @@ function infoView() {
       h("ul", { class: "body" },
         h("li", {}, "Only your friend's phone can unlock your messages. Not us, not the server."),
         h("li", {}, "If anyone changes even one dot of the picture, the message is rejected."),
-        h("li", {}, "If someone tries to swap a friend's keys, Chisel warns you and shows a safety number to check."),
+        h("li", {}, "If someone tries to swap a friend's keys, CHISEL warns you and shows a safety number to check."),
         h("li", {}, "No passwords: you sign in with a code sent to your email.")),
 
       h("h2", { class: "h-l" }, "Words explained"),
@@ -636,7 +735,7 @@ function infoView() {
       h("div", { class: "inset" },
         h("p", { class: "body" }, "X25519 key agreement → HKDF-SHA256 → AES-256-GCM encryption, signed with Ed25519. The message is hidden by keyed, scattered ±1 changes to 512×512 PNG pixels, at positions only the receiver can compute."),
         h("p", { class: "body" }, "Pictures are generated on the server with Pollinations.ai. Server: FastAPI on Render, Postgres on Neon, email codes by Brevo.")),
-      h("p", { class: "body" }, h("b", {}, "Chisel"), " stands for ", h("b", {}, "C"), "ryptographic ", h("b", {}, "H"), "ybrid ", h("b", {}, "I"), "mage-", h("b", {}, "S"), "teganographic ", h("b", {}, "E"), "phemeral ", h("b", {}, "L"), "ayer."),
+      h("p", { class: "body" }, h("b", {}, "CHISEL"), " stands for ", h("b", {}, "C"), "ryptographic ", h("b", {}, "H"), "ybrid ", h("b", {}, "I"), "mage-", h("b", {}, "S"), "teganographic ", h("b", {}, "E"), "phemeral ", h("b", {}, "L"), "ayer."),
 
       h("h2", { class: "h-l" }, "Made by"),
       h("div", { class: "dev-cards" }, dev("Divyansh Kumar Verma", "DivyanshKVerma"), dev("Saatwika Saini", "SaatwikaSaini")),
@@ -680,10 +779,14 @@ function settingsView() {
         radio("system", "System default"), radio("light", "Light"), radio("dark", "Dark")),
 
       h("hr", { class: "section-break" }),
+      h("h2", { class: "h-l" }, "Notifications"),
+      notificationsSection(),
+
+      h("hr", { class: "section-break" }),
       h("h2", { class: "h-l" }, "Privacy and security"),
       pinsSection,
       h("button", { class: "btn secondary-btn", type: "button", onclick: async () => {
-        const ok = await modal({ title: "Renew your daily key now?", body: h("p", { class: "body" }, "Pictures already sent to you that you haven't opened will become unreadable. That's how Chisel erases old messages."),
+        const ok = await modal({ title: "Renew your daily key now?", body: h("p", { class: "body" }, "Pictures already sent to you that you haven't opened will become unreadable. That's how CHISEL erases old messages."),
           actions: [{ label: "Renew key", value: true }, { label: "Cancel", value: false, kind: "secondary-btn" }] });
         if (!ok) return;
         try { S.keys = await maybeRotate(S.keys, true); toast("New daily key in place."); render(); } catch (e) { toast(friendly(e)); }
@@ -691,7 +794,7 @@ function settingsView() {
 
       h("hr", { class: "section-break" }),
       h("h2", { class: "h-l" }, "Chats"),
-      h("p", { class: "body" }, "Delete every picture sent to you from the server, and everything Chisel stored on this phone for your chats."),
+      h("p", { class: "body" }, "Delete every picture sent to you from the server, and everything CHISEL stored on this phone for your chats."),
       h("button", { class: "btn warning", type: "button", onclick: async () => {
         const ok = await modal({ title: "Delete all chats?", body: h("p", { class: "body" }, "This can't be undone. Pictures you've already sent stay with the people you sent them to until they vanish."),
           actions: [{ label: "Delete all chats", value: true, kind: "warning" }, { label: "Cancel", value: false, kind: "secondary-btn" }] });
@@ -714,7 +817,7 @@ function settingsView() {
       h("p", { class: "body" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); startDeleteAccount(); } }, "Delete my account")),
 
       h("hr", { class: "section-break" }),
-      h("p", { class: "small secondary" }, `Chisel ${APP_VERSION}${API_BASE ? ` · ${API_BASE.replace("https://", "")}` : ""}`)),
+      h("p", { class: "small secondary" }, `CHISEL ${APP_VERSION}${API_BASE ? ` · ${API_BASE.replace("https://", "")}` : ""}`)),
     tabbar("settings"));
 }
 
@@ -781,6 +884,7 @@ async function start() {
   setToken(sess.token);
   Object.assign(S, { me: sess.email, keys });
   await loadLocal();
+  startNotifications(sess.token);
   S.route = history.state?.name ? history.state : { name: "chats" };
   history.replaceState(S.route, "");
   render();
@@ -793,7 +897,14 @@ async function start() {
 }
 
 document.addEventListener("visibilitychange", () => { if (!document.hidden && S.me) refresh(); });
-setInterval(() => { if (!document.hidden && S.me && (S.route.name === "chats" || S.route.name === "chat")) refresh(); }, 15000);
+window.Capacitor?.Plugins?.App?.addListener?.("appStateChange", (st) => { if (st.isActive && S.me) refresh(); });
+let ticks = 0;
+setInterval(() => {
+  ticks++;
+  if (!S.me) return;
+  if (!N.inBackground()) { if (S.route.name === "chats" || S.route.name === "chat") refresh(); }
+  else if (N.wanted() && ticks % 4 === 0) refresh(); // in the background: check every minute for notifications
+}, 15000);
 if (!window.CHISEL_UNSUPPORTED) {
   if ("serviceWorker" in navigator && !window.Capacitor) navigator.serviceWorker.register("sw.js").catch(() => {});
   start();

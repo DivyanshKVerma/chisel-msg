@@ -884,11 +884,11 @@ def main():
 
     def i10():
         r = client.get("/")
-        assert r.status_code == 200 and "<title>Chisel</title>" in r.text, r.status_code
+        assert r.status_code == 200 and "<title>CHISEL</title>" in r.text, r.status_code
         csp = r.headers.get("content-security-policy", "")
         assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp, csp
-        for path in ("/js/chisel.js", "/js/app.js", "/js/ui.js", "/js/data.js", "/vendor/libs.js", "/js/compat.js", "/manifest.webmanifest",
-                     "/sw.js", "/icons/icon-192.png", "/fonts/arimo-latin-400-normal.woff2", "/favicon.ico"):
+        for path in ("/js/chisel.js", "/js/app.js", "/js/ui.js", "/js/data.js", "/js/notify.js", "/vendor/libs.js", "/js/compat.js", "/manifest.webmanifest",
+                     "/sw.js", "/icons/icon-192.png", "/icons/chisel-wordmark-header.png", "/fonts/arimo-latin-400-normal.woff2", "/favicon.ico"):
             assert client.get(path).status_code == 200, path
         assert client.get("/api/does-not-exist").status_code == 404
     timed("Phone app served from / with a strict CSP; API routes unaffected", i10)

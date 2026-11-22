@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Chisel</string>
-    <string name="title_activity_main">Chisel</string>
+    <string name="app_name">CHISEL</string>
+    <string name="title_activity_main">CHISEL</string>
     <string name="package_name">com.chisel.messenger</string>
     <string name="custom_url_scheme">com.chisel.messenger</string>
 </resources>

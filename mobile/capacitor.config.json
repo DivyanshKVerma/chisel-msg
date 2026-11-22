@@ -1,6 +1,6 @@
 {
   "appId": "com.chisel.messenger",
-  "appName": "Chisel",
+  "appName": "CHISEL",
   "webDir": "www",
   "android": {
     "allowMixedContent": false,
@@ -12,6 +12,18 @@
       "insetsHandling": "css",
       "initialViewportFitValueHint": "cover",
       "style": "DARK"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_chisel",
+      "iconColor": "#1D70B8"
+    },
+    "BackgroundRunner": {
+      "label": "com.chisel.messenger.inbox",
+      "src": "runners/inbox.js",
+      "event": "checkInbox",
+      "repeat": true,
+      "interval": 15,
+      "autoStart": true
     }
   }
 }

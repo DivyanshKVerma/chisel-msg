@@ -1,12 +1,12 @@
 // Chisel service worker: makes the app installable and quick to open.
 // App files: network first (so updates arrive), cached copy if offline.
 // /api/* is never cached or touched — messages and keys always go to the server live.
-const CACHE = "chisel-app-v4";
+const CACHE = "chisel-app-v5";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "favicon.ico", "css/app.css",
-  "js/app.js", "js/api.js", "js/chisel.js", "js/config.js", "js/data.js", "js/png.js", "js/store.js", "js/ui.js",
+  "js/app.js", "js/api.js", "js/chisel.js", "js/config.js", "js/data.js", "js/notify.js", "js/png.js", "js/store.js", "js/ui.js",
   "vendor/libs.js", "js/compat.js", "fonts/arimo-latin-400-normal.woff2", "fonts/arimo-latin-700-normal.woff2",
-  "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
+  "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/chisel-wordmark-header.png",
 ];
 
 self.addEventListener("install", (e) => {

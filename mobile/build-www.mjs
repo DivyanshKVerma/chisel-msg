@@ -7,9 +7,11 @@ const API_BASE = process.env.CHISEL_API_BASE || "https://chisel-api-1mkl.onrende
 await rm("www", { recursive: true, force: true });
 await cp("../web", "www", {
   recursive: true,
-  // The service worker and the logo source aren't needed inside the APK
-  filter: (src) => !/(\/sw\.js|chisel-logo-source\.webp|android-foreground-1024\.png)$/.test(src),
+  // The service worker and the icon/wordmark sources aren't needed inside the APK
+  filter: (src) => !/(\/sw\.js|chisel-icon(-source)?\.(svg|png)|chisel-wordmark\.(svg|png)|android-foreground-1024\.png)$/.test(src),
 });
+// Background inbox check for notifications while the app is closed
+await cp("runners", "www/runners", { recursive: true });
 const cfg = "www/js/config.js";
 const text = (await readFile(cfg, "utf8")).replace(/export const API_BASE = ".*?";/, `export const API_BASE = ${JSON.stringify(API_BASE)};`);
 await writeFile(cfg, text);
@@ -19,7 +21,7 @@ await build({
   entryPoints: ["www/js/app.js"], bundle: true, format: "iife", target: ["chrome67"],
   minify: true, legalComments: "inline", outfile: "www/js/app.bundle.js",
 });
-for (const f of ["app.js", "api.js", "chisel.js", "config.js", "data.js", "png.js", "store.js", "ui.js"]) await rm(`www/js/${f}`);
+for (const f of ["app.js", "api.js", "chisel.js", "config.js", "data.js", "notify.js", "png.js", "store.js", "ui.js"]) await rm(`www/js/${f}`);
 await rm("www/vendor", { recursive: true });
 const html = "www/index.html";
 await writeFile(html, (await readFile(html, "utf8")).replace('<script type="module" src="js/app.js"></script>', '<script src="js/app.bundle.js" defer></script>'));

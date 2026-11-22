@@ -14,7 +14,7 @@
     var h = document.createElement("h1"); h.textContent = "Please update Android System WebView";
     h.style.cssText = "font-size:28px;margin:0 0 16px";
     var p = document.createElement("p");
-    p.textContent = "Chisel needs a newer version of Android System WebView to encrypt your messages. Open the Play Store, search for “Android System WebView”, tap Update, then open Chisel again.";
+    p.textContent = "CHISEL needs a newer version of Android System WebView to encrypt your messages. Open the Play Store, search for “Android System WebView”, tap Update, then open CHISEL again.";
     box.appendChild(h); box.appendChild(p); el.appendChild(box);
   });
 })();

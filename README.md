@@ -1,6 +1,6 @@
-<img src="web/icons/icon-192.png" alt="Chisel logo" width="96" align="right">
+<img src="web/icons/icon-192.png" alt="CHISEL logo" width="96" align="right">
 
-# Chisel
+# CHISEL
 
 
 
@@ -8,7 +8,7 @@
 
 Made by **Divyansh Kumar Verma** ([@DivyanshKVerma](https://github.com/DivyanshKVerma)) and **Saatwika Saini** ([@SaatwikaSaini](https://github.com/SaatwikaSaini)).
 
-**Version 1.0.0** · Android 7.0+ · Server on Render · [Walkthrough with screenshots](docs/WALKTHROUGH.md)
+**Version 1.1.0** · Android 7.0+ · Server on Render · [Walkthrough with screenshots](docs/WALKTHROUGH.md) · [Changelog](CHANGELOG.md)
 
 | Cover image from the pool | Same image carrying an encrypted message |
 |---|---|
@@ -42,7 +42,7 @@ The right-hand image carries a 366-byte signed, encrypted message. The differenc
 
 | | |
 |---|---|
-| **Android** | Install `Chisel-1.0.0.apk` (a signed release build; see [Android APK](#android-apk) to build it). Allow *Install unknown apps* for your file manager or browser when Android asks. |
+| **Android** | Install `CHISEL-1.1.0.apk` (a signed release build; see [Android APK](#android-apk) to build it). Allow *Install unknown apps* for your file manager or browser when Android asks. |
 | **Any phone browser** | Open the server URL (`https://chisel-api-1mkl.onrender.com/`) and choose *Add to Home Screen*. |
 | **Needs** | An internet connection and an email address you can read. Nothing else to install: no Google account, Play Store or other apps. |
 
@@ -75,16 +75,16 @@ One app, two ways to get it: the **Android APK** (Capacitor) or the **web app** 
 |---|---|---|
 | ![Info page](docs/images/app_info.png) | ![Settings with theme choice](docs/images/app_settings.png) | ![Chat in dark mode](docs/images/app_dark.png) |
 
-**Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), form fields with 2 px borders, square buttons with a shadow, yellow focus states, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Glassmorphism (backdrop blur and translucency) is used: the floating bottom tab bar, chat header, and message composer. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app.
+**Design.** The interface uses a clear, accessible type scale, a blue accent colour (#1d70b8), the CHISEL wordmark as the title, form fields with 2 px borders, a rounded search bar, error messaging, notification banners, summary lists, radio controls, expandable details, and step-by-step flows. Text fields show no focus highlight while typing. Glassmorphism (backdrop blur and translucency) is used for the floating bottom tab bar, the round new-chat button, the chat header and the message composer; the new-chat and send buttons have no drop shadow. Speech-bubble tails sit at the outer corners: bottom-left for pictures you receive, bottom-right for yours. The typeface is Arimo (Arial-metric, SIL Open Font License), bundled with the app.
 
 | Screen | What it does |
 |---|---|
 | **Sign in** | Email → 6-digit code → keys generated on the phone (only signed public keys are uploaded) → new users choose a display name |
-| **Chats** | Conversations sorted by latest picture, unread counts, search; the **new-chat button** sits bottom-right like WhatsApp |
-| **Chat** | Glass header with the contact's name and email; picture bubbles (received left in grey, sent right in blue) with `[DD-MM-YY \| hh:mm am/pm]` stamps; glass composer to type and send |
+| **Chats** | Conversations sorted by latest picture, unread counts, search; **pull down to refresh**; the round glass **new-chat button** sits bottom-right like WhatsApp |
+| **Chat** | Glass header with the contact's name and email (**tap it to see their safety number** and yours, to compare in person); picture bubbles (received left in grey, sent right in blue) with `[DD-MM-YY \| hh:mm am/pm]` stamps; glass composer to type and send |
 | **Tap a picture** | Everything but the header is blurred to **15 pt** at **70 % opacity**, and the decrypted text appears in a card. Your own sent text comes from this phone's copy |
 | **Info** | Plain-language explanation, glossary, the technology, and the developers' GitHub links |
-| **Settings** | Name, email, safety number; **System / Light / Dark** theme; verified contacts; renew daily key; delete all chats; sign out; remove keys; delete account (confirmed with an email code) |
+| **Settings** | Name, email, safety number; **notifications** on/off; **System / Light / Dark** theme; verified contacts; renew daily key; delete all chats; sign out; remove keys; delete account (confirmed with an email code) |
 
 How it works on the phone:
 
@@ -94,22 +94,23 @@ How it works on the phone:
 - Sent pictures and their text are kept **on the sender's phone only** (IndexedDB) so both sides of a chat show; they're deleted after 24 h like the server copy.
 - Keys renew daily (cryptographic erasure); a changed safety number blocks sending or reading until the user compares the numbers and trusts the new one.
 - Strict Content-Security-Policy, and all user text is inserted as text, never HTML.
+- **Notifications** ([`web/js/notify.js`](web/js/notify.js), [`mobile/runners/inbox.js`](mobile/runners/inbox.js)): they name the sender only; the message stays locked in the picture. On Android, `@capacitor/local-notifications` covers the open app and `@capacitor/background-runner` checks the inbox about every 15 minutes while CHISEL is closed (it reads only inbox metadata, has no keys, and stores the session token in app-private storage that is excluded from backups). Browsers use the Notification API while the tab is open in the background. One notification per chat, updated rather than stacked.
 
 ---
 
 ## Android APK
 
-The Android app is in [`mobile/`](mobile): Capacitor 8 wrapping [`web/`](web), package **`com.chisel.messenger`**, version **1.0.0**.
+The Android app is in [`mobile/`](mobile): Capacitor 8 wrapping [`web/`](web), package **`com.chisel.messenger`**, version **1.1.0** (version code 2; installs over 1.0.0 and keeps keys and chats).
 
 | | |
 |---|---|
 | Android versions | 7.0 (API 24) to 16 (API 36) |
 | System WebView | Chrome 67 or newer (updated automatically on almost all phones). If it's older, Chisel shows how to update it instead of failing |
-| Permissions | Internet only |
+| Permissions | Internet and notifications (Android 13+ asks once). Location and exact-alarm permissions that plugins would add are removed in the manifest |
 | Server | `https://chisel-api-1mkl.onrender.com` over HTTPS; cleartext HTTP is blocked |
 | Signing | Release build, signed with the Chisel release key (APK Signature Scheme v2). Certificate SHA-256: `03:47:E0:09:E1:27:D1:83:26:3E:68:94:07:CE:7A:75:82:F5:63:23:49:87:7C:20:56:DB:20:2A:41:AA:FB:F3` |
 | Hardening | Not debuggable; Android backup disabled (`allowBackup=false`) so private keys never leave the phone in a cloud backup |
-| Tested on | Android 16 emulator (Pixel-class, WebView 133): sign-up, chat with a second client, reveal, back button, themes, launcher icon |
+| Tested on | Android 16 emulator (Pixel-class, WebView 133): upgrade from 1.0.0, sign-up, notification permission, chat with a second client, reveal, contact safety number, pull to refresh, background notification and tapping it, back button, themes, launcher icon |
 
 What makes it work on any Android phone:
 
@@ -138,7 +139,7 @@ npm run apk:debug    # unsigned-by-you debug build, for development only
 `keystore.properties` holds `storeFile`, `storePassword`, `keyAlias` and `keyPassword`. **Keep the keystore and its passwords safe and private:** every future update must be signed with the same key, or phones will refuse to install it over the old version.
 
 - `npm run www` copies `web/` into the app, bundles it and points it at the server (`CHISEL_API_BASE=http://… npm run www` for a test server).
-- `python make-icons.py` regenerates the launcher icons and splash screens from [`web/icons/chisel-logo-source.webp`](web/icons/chisel-logo-source.webp).
+- `python make-icons.py` regenerates the web icons, launcher icons, splash screens and the notification icon from [`web/icons/chisel-icon.svg`](web/icons/chisel-icon.svg) and [`web/icons/chisel-wordmark.svg`](web/icons/chisel-wordmark.svg) (rasterised to `chisel-icon-source.png` and `chisel-wordmark.png`).
 - To rebuild the bundled libraries: `cd web-src && npm install && npm run build`.
 
 ---
@@ -229,6 +230,7 @@ The cover must stay **lossless**: the server only accepts genuine 512×512 PNGs 
 
 Images are generated **on the server only** ([`server/pool.py`](server/pool.py)):
 
+- Each cover comes from a random prompt: one of **100 subjects** (landscapes, textures, architecture, sky, wildlife, art styles) × one of **10 styles** × a random seed, so chats rarely show similar pictures. Prompts never depend on what users write.
 - The server keeps a buffer of **5** AI-generated 512×512 covers in the database.
 - Every time a sender takes one, the server checks the buffer; once **2 or fewer** remain it generates enough new images (in the background) to get back to 5.
 - Refills are single-flight: several triggers at once produce one refill.
@@ -376,7 +378,7 @@ ADMIN_EMAILS=admin@example.com .venv/bin/python -m uvicorn server.main:app --por
 | `test_pool.py` | **11 / 11** — 5 → 4 → 3 → 2 triggers a refill back to 5 (exactly 3 generated), single-flight, empty → 503 → refill, outage survival |
 | `test_interop.py` | **14 / 14** — fingerprints, signed keys, Python→JS and JS→Python messages, identical pixel positions, PNG pixels |
 | App in a mobile-sized browser | Sign-up with display name, new chat, browser → Python and Python → browser messages, auto-refresh, tap-to-reveal blur, light and dark themes |
-| Android 16 emulator | Same flow in the APK: sign-up, new chat, Android → Python and Python → Android messages, reveal, back button, dark mode, launcher icon |
+| Android 16 emulator | Same flow in the APK: sign-up, new chat, Android → Python and Python → Android messages, reveal, back button, dark mode, launcher icon; v1.1: in-place upgrade from 1.0.0, notification permission, background-runner notification and tap-to-open, pull to refresh, contact safety number |
 | `test_e2e.py` | Passes |
 | `test_email.py` | **19 / 19** — code arrives only by email, Brevo failures return 502, production guard |
 | Live two-way test (Render + Neon + Brevo) | **33 / 33** in 31.3 s — fresh sign-up by emailed code, key upload and verification, one message each way, replay/tamper/wrong-receiver checks, cleanup |
@@ -406,5 +408,5 @@ Typical timings: encrypt + sign **~2 ms**, hide in image **~80 ms**, locate + ve
 - **Keys live on one device:** uninstalling the app, clearing its data, or moving to another phone means a key reset (after a fresh email sign-in) and a changed safety number. iOS may clear storage for web apps not added to the Home Screen after long inactivity.
 - **Sent text lives on the sender's phone:** it's needed to show your side of a chat, and is deleted after 24 h, but anyone with access to the unlocked phone could read it until then.
 - **Sideloaded, not on the Play Store:** Android asks to allow *Install unknown apps*, and Play Protect may show a one-time "unknown developer" notice.
-- **No push notifications:** the inbox refreshes when opened and every 15 s while open.
+- **Notifications are polled, not pushed:** while CHISEL is open the inbox refreshes every 15 s (a browser tab in the background checks every minute); the closed Android app checks about **every 15 minutes** (Android's minimum for background work), so a notification can lag a picture by up to ~15 min. Some phone makers' battery savers delay this further. Instant push would need Firebase Cloud Messaging. Notifications say who sent a picture, never what it says.
 - Some embedded/in-app browsers block service workers; the app still works there, just without install/offline caching.
